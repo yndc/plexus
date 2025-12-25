@@ -24,8 +24,9 @@ public:
   /**
    * @brief Registers a node for inclusion in the graph.
    * @param config The node configuration.
+   * @return NodeID The unique ID of the registered node.
    */
-  void add_node(NodeConfig config);
+  NodeID add_node(NodeConfig config);
 
   /**
    * @brief Compiles the registered nodes into an optimized ExecutionGraph.

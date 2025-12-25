@@ -22,6 +22,9 @@ struct Dependency {
   Access access; ///< The type of access required.
 };
 
+/// @brief Unique identifier for a registered Node.
+using NodeID = uint32_t;
+
 /**
  * @brief Configuration structure for creating a Node in the Graph.
  */
@@ -29,6 +32,9 @@ struct NodeConfig {
   std::string debug_name;               ///< Human-readable name for debugging.
   std::function<void()> work_function;  ///< The actual logic to execute.
   std::vector<Dependency> dependencies; ///< List of resources this node uses.
+
+  std::vector<NodeID> run_after;  ///< Nodes that must run BEFORE this node.
+  std::vector<NodeID> run_before; ///< Nodes that must run AFTER this node.
 
   /**
    * @brief Priority for deterministic ordering of independent nodes.

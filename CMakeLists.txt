@@ -31,6 +31,7 @@ add_executable(CyclesTests
     tests/test_cycle_detection.cpp
     tests/test_concurrency.cpp
     tests/test_run_loop.cpp
+    tests/test_explicit_ordering.cpp
 )
 target_link_libraries(CyclesTests PRIVATE CyclesCore gtest_main)
 
