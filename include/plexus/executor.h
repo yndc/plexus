@@ -1,9 +1,9 @@
 #pragma once
-#include "Cycles/execution_graph.h"
-#include "Cycles/thread_pool.h"
+#include "plexus/execution_graph.h"
+#include "plexus/thread_pool.h"
 #include <atomic>
 
-namespace Cycles {
+namespace Plexus {
 
     /**
      * @brief A generic executor for processing ExecutionGraphs.

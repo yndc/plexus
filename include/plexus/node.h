@@ -1,11 +1,11 @@
 #pragma once
-#include "Cycles/context.h"
+#include "plexus/context.h"
 #include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
 
-namespace Cycles {
+namespace Plexus {
     /**
      * @brief Defines how a Node interacts with a Resource.
      */

@@ -1,6 +1,6 @@
-#include "Cycles/context.h"
+#include "plexus/context.h"
 
-namespace Cycles {
+namespace Plexus {
 
     ResourceID Context::register_resource(const std::string &name) {
         std::lock_guard<std::mutex> lock(m_mutex);

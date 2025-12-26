@@ -1,9 +1,9 @@
-PROJECT_NAME           = "Cycles"
+PROJECT_NAME           = "plexus"
 PROJECT_NUMBER         = 1.0.0
 PROJECT_BRIEF          = "Task Scheduling Framework for C++20"
 
 OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@/docs/doxygen
-INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include/Cycles @CMAKE_CURRENT_SOURCE_DIR@/README.md
+INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include/plexus @CMAKE_CURRENT_SOURCE_DIR@/README.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = @CMAKE_CURRENT_SOURCE_DIR@/README.md
 

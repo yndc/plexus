@@ -1,10 +1,10 @@
 #pragma once
-#include "Cycles/context.h"
-#include "Cycles/execution_graph.h"
-#include "Cycles/node.h"
+#include "plexus/context.h"
+#include "plexus/execution_graph.h"
+#include "plexus/node.h"
 #include <vector>
 
-namespace Cycles {
+namespace Plexus {
 
     /**
      * @brief Constructs an ExecutionGraph from a set of Nodes and their

@@ -1,11 +1,11 @@
-#include "Cycles/graph_builder.h"
+#include "plexus/graph_builder.h"
 #include <algorithm>
 #include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
-namespace Cycles {
+namespace Plexus {
 
     GraphBuilder::GraphBuilder(Context &ctx) : m_ctx(ctx) {}
 

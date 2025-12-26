@@ -7,7 +7,7 @@
 #include <thread>
 #include <vector>
 
-namespace Cycles {
+namespace Plexus {
 
     /**
      * @brief A basic thread pool for executing tasks in parallel.

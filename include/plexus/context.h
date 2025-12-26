@@ -4,7 +4,7 @@
 #include <mutex>
 #include <string>
 
-namespace Cycles {
+namespace Plexus {
     /// @brief Unique identifier for a resource managed by the Context.
     using ResourceID = uint32_t;
 

@@ -1,6 +1,6 @@
-#include "Cycles/thread_pool.h"
+#include "plexus/thread_pool.h"
 
-namespace Cycles {
+namespace Plexus {
 
     ThreadPool::ThreadPool() {
         // Leave one core for the main thread/OS

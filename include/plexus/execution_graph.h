@@ -2,7 +2,7 @@
 #include <functional>
 #include <vector>
 
-namespace Cycles {
+namespace Plexus {
     /**
      * @brief Roughly a baked schedule of tasks.
      *

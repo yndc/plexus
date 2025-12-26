@@ -1,12 +1,12 @@
-#include "Cycles/context.h"
-#include "Cycles/graph_builder.h"
+#include "plexus/context.h"
+#include "plexus/graph_builder.h"
 #include <gtest/gtest.h>
 
 TEST(TopologyTest, ReadAfterWrite) {
-    Cycles::Context ctx;
+    Plexus::Context ctx;
     auto res_id = ctx.register_resource("BufferA");
 
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::GraphBuilder builder(ctx);
 
     // Node A writes to BufferA
     // Node B reads from BufferA
@@ -15,9 +15,9 @@ TEST(TopologyTest, ReadAfterWrite) {
     bool a_ran = false;
     bool b_ran = false;
 
-    builder.add_node({"WriterA", [&]() { a_ran = true; }, {{res_id, Cycles::Access::WRITE}}});
+    builder.add_node({"WriterA", [&]() { a_ran = true; }, {{res_id, Plexus::Access::WRITE}}});
 
-    builder.add_node({"ReaderB", [&]() { b_ran = true; }, {{res_id, Cycles::Access::READ}}});
+    builder.add_node({"ReaderB", [&]() { b_ran = true; }, {{res_id, Plexus::Access::READ}}});
 
     auto graph = builder.bake();
 
@@ -37,18 +37,18 @@ TEST(TopologyTest, ReadAfterWrite) {
 }
 
 TEST(TopologyTest, WriteAfterRead) {
-    Cycles::Context ctx;
+    Plexus::Context ctx;
     auto res_id = ctx.register_resource("BufferA");
 
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::GraphBuilder builder(ctx);
 
     // Node A reads BufferA
     // Node B writes BufferA
     // Expectation: A -> B
 
-    builder.add_node({"ReaderA", []() {}, {{res_id, Cycles::Access::READ}}});
+    builder.add_node({"ReaderA", []() {}, {{res_id, Plexus::Access::READ}}});
 
-    builder.add_node({"WriterB", []() {}, {{res_id, Cycles::Access::WRITE}}});
+    builder.add_node({"WriterB", []() {}, {{res_id, Plexus::Access::WRITE}}});
 
     auto graph = builder.bake();
 

@@ -1,6 +1,6 @@
-#include "Cycles/context.h"
-#include "Cycles/graph_builder.h"
-#include "Cycles/thread_pool.h"
+#include "plexus/context.h"
+#include "plexus/graph_builder.h"
+#include "plexus/thread_pool.h"
 #include <atomic>
 #include <gtest/gtest.h>
 #include <random>
@@ -8,7 +8,7 @@
 #include <vector>
 
 // Helper to execute async graph in tests
-void execute_graph_test(Cycles::ThreadPool &pool, const Cycles::ExecutionGraph &graph) {
+void execute_graph_test(Plexus::ThreadPool &pool, const Plexus::ExecutionGraph &graph) {
     if (graph.nodes.empty())
         return;
 
@@ -49,17 +49,17 @@ void execute_graph_test(Cycles::ThreadPool &pool, const Cycles::ExecutionGraph &
 }
 
 TEST(ConcurrencyTest, RunGraph) {
-    Cycles::Context ctx;
+    Plexus::Context ctx;
     auto res_id = ctx.register_resource("SharedData");
 
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::GraphBuilder builder(ctx);
 
     std::atomic<int> counter{0};
     std::atomic<int> nodes_read_correct_value{0};
     const int num_readers = 100;
 
     // Node: Writer (Runs first)
-    builder.add_node({"Writer", [&]() { counter = 1000; }, {{res_id, Cycles::Access::WRITE}}});
+    builder.add_node({"Writer", [&]() { counter = 1000; }, {{res_id, Plexus::Access::WRITE}}});
 
     // Nodes: Readers (Run parallel after Writer)
     for (int i = 0; i < num_readers; ++i) {
@@ -69,14 +69,14 @@ TEST(ConcurrencyTest, RunGraph) {
                                   nodes_read_correct_value++;
                               }
                           },
-                          {{res_id, Cycles::Access::READ}}});
+                          {{res_id, Plexus::Access::READ}}});
     }
 
     // Node: Final Writer (Runs after all Readers)
-    builder.add_node({"Finalizer", [&]() { counter = 2000; }, {{res_id, Cycles::Access::WRITE}}});
+    builder.add_node({"Finalizer", [&]() { counter = 2000; }, {{res_id, Plexus::Access::WRITE}}});
 
     auto graph = builder.bake();
-    Cycles::ThreadPool pool;
+    Plexus::ThreadPool pool;
 
     execute_graph_test(pool, graph);
 
@@ -85,7 +85,7 @@ TEST(ConcurrencyTest, RunGraph) {
 }
 
 TEST(ConcurrencyTest, IndependentTasks) {
-    Cycles::ThreadPool pool;
+    Plexus::ThreadPool pool;
     std::atomic<int> count{0};
 
     std::vector<std::function<void()>> tasks;
@@ -100,15 +100,15 @@ TEST(ConcurrencyTest, IndependentTasks) {
 }
 
 TEST(ConcurrencyTest, StressRandomGraph) {
-    Cycles::ThreadPool pool;
-    Cycles::Context ctx;
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::ThreadPool pool;
+    Plexus::Context ctx;
+    Plexus::GraphBuilder builder(ctx);
 
     const int NUM_NODES = 100;
     const int NUM_RESOURCES = 10;
 
     // Create resources
-    std::vector<Cycles::ResourceID> resources;
+    std::vector<Plexus::ResourceID> resources;
     for (int i = 0; i < NUM_RESOURCES; ++i) {
         resources.push_back(ctx.register_resource("Res_" + std::to_string(i)));
     }
@@ -127,14 +127,14 @@ TEST(ConcurrencyTest, StressRandomGraph) {
     std::atomic<int> global_ticket{0};
 
     for (int i = 0; i < NUM_NODES; ++i) {
-        Cycles::NodeConfig config;
+        Plexus::NodeConfig config;
         config.debug_name = "Node_" + std::to_string(i);
 
         int num_deps = std::uniform_int_distribution<>(1, 3)(rng);
         for (int j = 0; j < num_deps; ++j) {
             int res_idx = std::uniform_int_distribution<>(0, NUM_RESOURCES - 1)(rng);
-            auto access = (std::uniform_int_distribution<>(0, 1)(rng) == 0) ? Cycles::Access::READ
-                                                                            : Cycles::Access::WRITE;
+            auto access = (std::uniform_int_distribution<>(0, 1)(rng) == 0) ? Plexus::Access::READ
+                                                                            : Plexus::Access::WRITE;
 
             bool exists = false;
             for (const auto &d : config.dependencies)
@@ -142,7 +142,7 @@ TEST(ConcurrencyTest, StressRandomGraph) {
                     exists = true;
             if (!exists) {
                 config.dependencies.push_back({resources[res_idx], access});
-                if (access == Cycles::Access::WRITE) {
+                if (access == Plexus::Access::WRITE) {
                     expected_writes[res_idx]++;
                 }
             }
@@ -154,7 +154,7 @@ TEST(ConcurrencyTest, StressRandomGraph) {
             int ticket = global_ticket.fetch_add(1);
 
             for (const auto &dep : config.dependencies) {
-                if (dep.access == Cycles::Access::WRITE) {
+                if (dep.access == Plexus::Access::WRITE) {
                     resource_data[dep.id].push_back({i, ticket});
                 } else {
                     // Read: check size
@@ -186,17 +186,17 @@ TEST(ConcurrencyTest, StressRandomGraph) {
 }
 
 TEST(ConcurrencyTest, WriteAfterRead) {
-    Cycles::Context ctx;
+    Plexus::Context ctx;
     auto res_id = ctx.register_resource("Shared");
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::GraphBuilder builder(ctx);
 
     std::atomic<int> read_count{0};
     bool write_happened = false;
     bool write_saw_all_reads = false;
 
     // 2 Readers
-    builder.add_node({"Reader1", [&]() { read_count++; }, {{res_id, Cycles::Access::READ}}});
-    builder.add_node({"Reader2", [&]() { read_count++; }, {{res_id, Cycles::Access::READ}}});
+    builder.add_node({"Reader1", [&]() { read_count++; }, {{res_id, Plexus::Access::READ}}});
+    builder.add_node({"Reader2", [&]() { read_count++; }, {{res_id, Plexus::Access::READ}}});
 
     // 1 Writer (must run AFTER readers)
     builder.add_node({"Writer",
@@ -206,10 +206,10 @@ TEST(ConcurrencyTest, WriteAfterRead) {
                               write_saw_all_reads = true;
                           }
                       },
-                      {{res_id, Cycles::Access::WRITE}}});
+                      {{res_id, Plexus::Access::WRITE}}});
 
     auto graph = builder.bake();
-    Cycles::ThreadPool pool;
+    Plexus::ThreadPool pool;
 
     execute_graph_test(pool, graph);
 

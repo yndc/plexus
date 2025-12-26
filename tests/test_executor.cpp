@@ -1,15 +1,15 @@
-#include "Cycles/executor.h"
+#include "plexus/executor.h"
 #include <atomic>
 #include <gtest/gtest.h>
 
 TEST(ExecutorTest, BasicExecution) {
-    Cycles::ThreadPool pool;
-    Cycles::Executor executor(pool);
+    Plexus::ThreadPool pool;
+    Plexus::Executor executor(pool);
 
     std::atomic<int> count{0};
 
     // Setup Graph (Simple task counting executions)
-    Cycles::ExecutionGraph graph;
+    Plexus::ExecutionGraph graph;
     graph.nodes.push_back({[&]() { count++; }, {}, 0});
     graph.entry_nodes.push_back(0);
 
@@ -18,8 +18,8 @@ TEST(ExecutorTest, BasicExecution) {
 }
 
 TEST(ExecutorTest, Profiling) {
-    Cycles::ThreadPool pool;
-    Cycles::Executor executor(pool);
+    Plexus::ThreadPool pool;
+    Plexus::Executor executor(pool);
 
     bool callback_invoked = false;
     executor.set_profiler_callback([&](const char *name, double duration) {
@@ -27,7 +27,7 @@ TEST(ExecutorTest, Profiling) {
         EXPECT_GE(duration, 0.0);
     });
 
-    Cycles::ExecutionGraph graph;
+    Plexus::ExecutionGraph graph;
     graph.nodes.push_back({[]() {}, {}, 0});
     graph.entry_nodes.push_back(0);
 
@@ -36,13 +36,13 @@ TEST(ExecutorTest, Profiling) {
 }
 
 TEST(ExecutorTest, MultiNodeGraph) {
-    Cycles::ThreadPool pool;
-    Cycles::Executor executor(pool);
+    Plexus::ThreadPool pool;
+    Plexus::Executor executor(pool);
 
     std::atomic<int> counter{0};
 
     // Graph: A -> B
-    Cycles::ExecutionGraph graph;
+    Plexus::ExecutionGraph graph;
 
     // Node 0 (A)
     graph.nodes.push_back({

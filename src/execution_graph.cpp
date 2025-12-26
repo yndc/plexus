@@ -1,5 +1,5 @@
-#include "Cycles/execution_graph.h"
+#include "plexus/execution_graph.h"
 
-namespace Cycles {
+namespace Plexus {
     // Currently empty as it's just a struct, but file is needed for CMake
 }

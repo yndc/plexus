@@ -1,7 +1,7 @@
-#include "Cycles/executor.h"
+#include "plexus/executor.h"
 #include <memory>
 
-namespace Cycles {
+namespace Plexus {
 
     Executor::Executor(ThreadPool &pool) : m_pool(pool) {}
 

@@ -1,7 +1,7 @@
-#include "Cycles/graph_builder.h"
+#include "plexus/graph_builder.h"
 #include <gtest/gtest.h>
 
-using namespace Cycles;
+using namespace Plexus;
 
 TEST(TopologyTest, ExplicitOrdering) {
     Context ctx;

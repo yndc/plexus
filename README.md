@@ -1,6 +1,6 @@
-# Cycles
+# plexus
 
-Cycles is a high-performance, multithreaded task scheduling framework for C++20 based on Directed Acyclic Graphs (DAG). It orchestrates units of work (Nodes) based on data access rules (Dependencies) to dynamically execute tasks as soon as their prerequisites are met.
+plexus is a high-performance, multithreaded task scheduling framework for C++20 based on Directed Acyclic Graphs (DAG). It orchestrates units of work (Nodes) based on data access rules (Dependencies) to dynamically execute tasks as soon as their prerequisites are met.
 
 ## Features
 
@@ -12,7 +12,7 @@ Cycles is a high-performance, multithreaded task scheduling framework for C++20 
 
 ## Building
 
-Cycles uses CMake. To build the library and tests:
+plexus uses CMake. To build the library and tests:
 
 ```bash
 mkdir build
@@ -25,37 +25,37 @@ ctest
 ## Basic Usage
 
 ```cpp
-#include "Cycles/context.h"
-#include "Cycles/graph_builder.h"
-#include "Cycles/executor.h"
+#include "plexus/context.h"
+#include "plexus/graph_builder.h"
+#include "plexus/executor.h"
 #include <iostream>
 
 void example() {
-    Cycles::Context ctx;
+    Plexus::Context ctx;
     auto buffer_id = ctx.register_resource("BufferA");
 
-    Cycles::GraphBuilder builder(ctx);
+    Plexus::GraphBuilder builder(ctx);
 
     // Node A: Writes to BufferA
     builder.add_node({
         "Writer",
         []() { std::cout << "Writing...\n"; },
-        {{buffer_id, Cycles::Access::WRITE}}
+        {{buffer_id, Plexus::Access::WRITE}}
     });
 
     // Node B: Reads from BufferA
     builder.add_node({
         "Reader",
         []() { std::cout << "Reading...\n"; },
-        {{buffer_id, Cycles::Access::READ}}
+        {{buffer_id, Plexus::Access::READ}}
     });
 
     // Bake into an execution graph
     auto graph = builder.bake();
 
     // Execute
-    Cycles::ThreadPool pool;
-    Cycles::Executor executor(pool);
+    Plexus::ThreadPool pool;
+    Plexus::Executor executor(pool);
     executor.run(graph);
 }
 ```
@@ -63,7 +63,7 @@ void example() {
 ## Advanced Usage
 
 ### Dependency Resolution (WAW, WAR)
-Cycles automatically handles complex dependency chains.
+plexus automatically handles complex dependency chains.
 
 - **Read-After-Write (RAW)**: A Reader will always run after a Writer of the same resource has finished.
 - **Write-After-Write (WAW)**: If multiple nodes write to the same resource, the order is determined by registration order (or priority). The second writer will run after the first.
@@ -73,7 +73,7 @@ Cycles automatically handles complex dependency chains.
 You can hook into the `Executor` to measure performance.
 
 ```cpp
-Cycles::Executor executor(pool);
+Plexus::Executor executor(pool);
 executor.set_profiler_callback([](const char* name, double duration_ms) {
     std::cout << "[Profile] " << name << " took " << duration_ms << "ms\n"; 
 });
