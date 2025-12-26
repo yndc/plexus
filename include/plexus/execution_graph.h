@@ -1,6 +1,8 @@
 #pragma once
 #include "plexus/node.h" // For ErrorPolicy
 #include <functional>
+#include <iostream>
+#include <string>
 #include <vector>
 
 namespace Plexus {
@@ -23,9 +25,15 @@ namespace Plexus {
             int initial_dependencies = 0; ///< How many inputs this node needs
             int priority = 0;             ///< Effective priority for scheduling (higher is better)
             ErrorPolicy error_policy = ErrorPolicy::Continue; ///< Policy on failure
+            std::string label;                                ///< Debug label
         };
 
         std::vector<Node> nodes;      ///< All nodes in the graph
         std::vector<int> entry_nodes; ///< Nodes with 0 dependencies (start here)
+
+        /**
+         * @brief Dumps a textual representation of the graph to the given stream.
+         */
+        void dump_debug(std::ostream &os) const;
     };
 }

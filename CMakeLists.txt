@@ -33,6 +33,7 @@ add_executable(plexusTests
     tests/test_executor.cpp
     tests/test_explicit_ordering.cpp
     tests/test_error_handling.cpp
+    tests/test_graph_viz.cpp
 )
 target_link_libraries(plexusTests PRIVATE plexusCore gtest_main)
 
