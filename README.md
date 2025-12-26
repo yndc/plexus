@@ -8,7 +8,9 @@
 - **Dynamic Task Graph**: Nodes execute immediately upon dependency resolution, maximizing parallelism.
 - **Strict Phase Separation**: Heavy validation and optimization during "Baking", allocation-free execution during "Runtime".
 - **Data-Driven Dependencies**: Automatic topology inference based on Read/Write access to Resources.
-- **Fail-Fast Safety**: Immediate termination on cyclic dependencies or invalid access patterns.
+- **Resilient Error Handling**: Multiple recovery policies including `Continue`, `CancelDependents`, and `CancelGraph`.
+- **Graph Visualization**: Textual debug output for auditing the baked execution graph structure and priorities.
+- **Fail-Fast Safety**: Immediate termination on cyclic dependencies or invalid access patterns during baking.
 - **Modern C++**: Built with C++20.
 
 ## Building
@@ -111,7 +113,23 @@ You can assign an integer priority to any node (Default: 0).
 ```cpp
 builder.add_node({
     .debug_name = "CriticalTask",
-    .priority = 100 // Runs ASAP
+    .priority = 100, // Runs ASAP
+    .error_policy = Plexus::ErrorPolicy::CancelGraph // Stop everything if this fails
+});
+```
+
+#### 4. Error Policies (`error_policy`)
+You can define how the executor reacts when a node's `work_function` throws an exception.
+
+- `ErrorPolicy::Continue` (Default): The error is recorded, but dependent nodes are still triggered. Best for "best-effort" tasks.
+- `ErrorPolicy::CancelDependents`: If this node fails, all its direct and indirect descendants are skipped. Other independent branches continue.
+- `ErrorPolicy::CancelGraph`: If this node fails, no new tasks are scheduled. The executor waits for currently running tasks to finish and then rethrows the exception.
+
+```cpp
+builder.add_node({
+    .debug_name = "OptionalTask",
+    .work_function = []() { /* ... */ },
+    .error_policy = Plexus::ErrorPolicy::Continue 
 });
 ```
 
@@ -124,6 +142,14 @@ executor.set_profiler_callback([](const char* name, double duration_ms) {
     std::cout << "[Profile] " << name << " took " << duration_ms << "ms\n"; 
 });
 executor.run(graph);
+```
+
+### Visualizing the Graph
+You can dump a textual representation of the execution graph for debugging. This shows the resolved dependencies, entry nodes, and effective priorities.
+
+```cpp
+auto graph = builder.bake();
+graph.dump_debug(std::cout);
 ```
 
 ## Documentation
