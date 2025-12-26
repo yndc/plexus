@@ -19,7 +19,7 @@ add_library(CyclesCore
     src/graph_builder.cpp
     src/execution_graph.cpp
     src/thread_pool.cpp
-    src/run_loop.cpp
+    src/executor.cpp
 )
 target_include_directories(CyclesCore PUBLIC include)
 
@@ -30,7 +30,7 @@ add_executable(CyclesTests
     tests/test_topology.cpp
     tests/test_cycle_detection.cpp
     tests/test_concurrency.cpp
-    tests/test_run_loop.cpp
+    tests/test_executor.cpp
     tests/test_explicit_ordering.cpp
 )
 target_link_libraries(CyclesTests PRIVATE CyclesCore gtest_main)

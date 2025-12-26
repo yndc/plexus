@@ -1,27 +1,11 @@
-#include "Cycles/run_loop.h"
+#include "Cycles/executor.h"
+#include <memory>
 
 namespace Cycles {
 
-    RunLoop::RunLoop(ThreadPool &pool) : m_pool(pool) {}
+    Executor::Executor(ThreadPool &pool) : m_pool(pool) {}
 
-    void RunLoop::set_fixed_graph(ExecutionGraph &&graph) { m_fixed_graph = std::move(graph); }
-
-    void RunLoop::set_render_graph(ExecutionGraph &&graph) { m_render_graph = std::move(graph); }
-
-    void RunLoop::run_one_frame(double delta_time) {
-        m_accumulator += delta_time;
-
-        // Fixed Update Loop: Catch up with physics/simulation
-        while (m_accumulator >= m_fixed_step) {
-            execute_graph(m_fixed_graph, "FixedUpdate");
-            m_accumulator -= m_fixed_step;
-        }
-
-        // Render Update: Once per frame
-        execute_graph(m_render_graph, "RenderUpdate");
-    }
-
-    void RunLoop::execute_graph(const ExecutionGraph &graph, const char *debug_label) {
+    void Executor::run(const ExecutionGraph &graph) {
         if (graph.nodes.empty())
             return;
 
@@ -48,11 +32,11 @@ namespace Cycles {
         if (m_profiler_callback) {
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double, std::milli> diff = end - start;
-            m_profiler_callback(debug_label, diff.count());
+            m_profiler_callback("Executor::run", diff.count());
         }
     }
 
-    void RunLoop::run_task(const ExecutionGraph &graph, std::atomic<int> *counters, int node_idx) {
+    void Executor::run_task(const ExecutionGraph &graph, std::atomic<int> *counters, int node_idx) {
         // Run user work
         if (graph.nodes[node_idx].work) {
             graph.nodes[node_idx].work();
