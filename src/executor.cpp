@@ -10,6 +10,8 @@ namespace Plexus {
 
     Executor::Executor(ThreadPool &pool) : m_pool(&pool) {}
 
+    Executor::~Executor() = default;
+
     void Executor::run(const ExecutionGraph &graph) {
         if (graph.nodes.empty())
             return;

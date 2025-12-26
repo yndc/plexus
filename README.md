@@ -163,6 +163,20 @@ builder.add_node({
 });
 ```
 
+#### 5. Thread Affinity (`thread_affinity`)
+You can control which thread a node runs on using the `thread_affinity` option.
+
+- `ThreadAffinity::Any` (Default): The node can be executed by any worker thread in the pool.
+- `ThreadAffinity::Main`: The node will explicitly run on the thread that called `executor.run()`. This is essential for integrating with APIs that are not thread-safe (e.g. OpenGL, OS Event Loops).
+
+```cpp
+builder.add_node({
+    .debug_name = "RenderTask",
+    .work_function = []() { render_frame(); },
+    .thread_affinity = Plexus::ThreadAffinity::Main 
+});
+```
+
 ### Profiling
 You can hook into the `Executor` to measure performance.
 

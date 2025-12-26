@@ -31,6 +31,11 @@ namespace Plexus {
         explicit Executor(ThreadPool &pool);
 
         /**
+         * @brief Destructor.
+         */
+        ~Executor();
+
+        /**
          * @brief Executes the given graph.
          *
          * This function blocks the calling thread until all tasks in the graph have
