@@ -41,6 +41,11 @@ namespace Plexus {
 
         ThreadPool &m_pool;
         ProfilerCallback m_profiler_callback;
+
+        // Error Handling
+        std::atomic<bool> m_cancel_graph_execution{false};
+        std::mutex m_exception_mutex;
+        std::vector<std::exception_ptr> m_exceptions;
     };
 
 }

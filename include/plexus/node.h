@@ -26,6 +26,15 @@ namespace Plexus {
     using NodeID = uint32_t;
 
     /**
+     * @brief Defines behavior when the node's work function throws an exception.
+     */
+    enum class ErrorPolicy {
+        Continue,         ///< Ignore error, trigger dependents (Best Effort).
+        CancelDependents, ///< Stop this branch, skip dependents. Independent branches continue.
+        CancelGraph       ///< Stop scheduling ANY new tasks. Drain current tasks.
+    };
+
+    /**
      * @brief Configuration structure for creating a Node in the Graph.
      */
     struct NodeConfig {
@@ -42,5 +51,10 @@ namespace Plexus {
          * This value is accumulated with descendant counts to form effective priority.
          */
         int priority = 0;
+
+        /**
+         * @brief Policy to apply on failure. Default is Continue.
+         */
+        ErrorPolicy error_policy = ErrorPolicy::Continue;
     };
 }

@@ -156,6 +156,7 @@ namespace Plexus {
             graph.nodes[i].dependents = std::move(adj[i]);
             graph.nodes[i].initial_dependencies = indegree[i];
             graph.nodes[i].priority = effective_prio[i];
+            graph.nodes[i].error_policy = m_nodes[i].error_policy;
 
             if (indegree[i] == 0) {
                 graph.entry_nodes.push_back(i);

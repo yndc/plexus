@@ -32,6 +32,7 @@ add_executable(plexusTests
     tests/test_concurrency.cpp
     tests/test_executor.cpp
     tests/test_explicit_ordering.cpp
+    tests/test_error_handling.cpp
 )
 target_link_libraries(plexusTests PRIVATE plexusCore gtest_main)
 
