@@ -52,9 +52,9 @@ namespace Plexus {
                     m_main_queue_backlog.push_back(node_idx);
                 }
             } else {
-                m_pool->enqueue([this, &graph, counters_ptr,
-                                 node_idx]() { run_task(graph, counters_ptr, node_idx); },
-                                graph.nodes[node_idx].priority);
+                m_pool->enqueue([this, &graph, counters_ptr, node_idx]() {
+                    run_task(graph, counters_ptr, node_idx);
+                });
             }
         }
 
@@ -166,9 +166,9 @@ namespace Plexus {
                             }
                             m_cv_main_thread.notify_one();
                         } else {
-                            m_pool->enqueue([this, &graph, counters,
-                                             dep_idx]() { run_task(graph, counters, dep_idx); },
-                                            graph.nodes[dep_idx].priority);
+                            m_pool->enqueue([this, &graph, counters, dep_idx]() {
+                                run_task(graph, counters, dep_idx);
+                            });
                         }
                     } catch (...) {
                         // Rollback count for the child we failed to enqueue

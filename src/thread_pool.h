@@ -163,9 +163,7 @@ namespace Plexus {
             m_cv_work.notify_all();
         }
 
-        template <typename F> void enqueue(F &&f, int priority = 4) {
-            (void)priority;
-
+        template <typename F> void enqueue(F &&f) {
             if (m_stop.load(std::memory_order_relaxed))
                 throw std::runtime_error("ThreadPool stopped");
 
