@@ -12,6 +12,11 @@
 - **Graph Visualization**: Textual debug output for auditing the baked execution graph structure and priorities.
 - **Fail-Fast Safety**: Immediate termination on cyclic dependencies or invalid access patterns during baking.
 - **Modern C++**: Built with C++20.
+- **Optimized Thread Pool**:
+    - **Zero-Allocation**: Pre-allocated task storage prevents heap fragmentation and overhead during execution.
+    - **Work-Stealing Algorithm**: Randomized victim selection ensures even load distribution across cores.
+    - **Hybrid Lock-Free Deque**: Utilizes a split-lock architecture (wait-free push/pop for owner) to minimize contention.
+    - **LIFO Local Scheduling**: Improves CPU cache locality by prioritizing recently added local tasks.
 
 ## Building
 
