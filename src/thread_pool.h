@@ -214,7 +214,7 @@ namespace Plexus {
         std::condition_variable m_cv_work;
         std::condition_variable m_cv_done;
         std::atomic<bool> m_stop{false};
-        std::atomic<int> m_active_tasks{0}; // Atomic now as it's modified by multiple threads
+        std::atomic<int> m_active_tasks{0};
         std::atomic<int> m_queued_tasks{0};
 
         void worker_thread(int index) {
@@ -285,10 +285,7 @@ namespace Plexus {
 
                 if (!found_task) {
                     // 3. Spin-Wait
-                    // Simple heuristic: spin a few times yielding to see if work appears
-                    // This avoids sleeping immediately if a task is just about to be enqueued
                     for (int i = 0; i < 64; ++i) {
-                        // Check local again
                         {
                             std::lock_guard<std::mutex> lock(m_queues[index]->mutex);
                             if (m_queues[index]->queue.pop_back(task)) {
@@ -297,39 +294,25 @@ namespace Plexus {
                                 break;
                             }
                         }
-                        // Check others? Maybe too expensive to lock-scan.
-                        // Just yield and retry local (maybe work stole back? Unlikely with this
-                        // impl) Actually, we should retry the full scan loop or just checking our
-                        // own buffer? If we are waiting, it means we scanned EVERYONE and found
-                        // nothing. So allow a brief window for new work to arrive by yielding.
                         std::this_thread::yield();
-
-                        // Re-check local for new arrivals (most likely place for main thread to
-                        // push if affinity, or random) Actually main thread round-robins.
-                        if (i % 4 == 0) { // Periodically re-scan full stealing
-                                          // copy-paste stealing logic? somewhat messy.
-                                          // Let's just break the spin loop and let the outer loop
-                                          // retry? No, outer loop has no spin limit logic.
-                        }
                     }
 
-                    // To do this cleanly without copy-paste:
-                    // We need to loop the whole "Try Local -> Steal" block multiple times with
-                    // yields in between.
+                    // 4. Wait
+                    if (!found_task) {
+                        std::unique_lock<std::mutex> lock(m_mutex);
+                        m_cv_work.wait(lock, [this]() {
+                            return m_stop.load(std::memory_order_relaxed) ||
+                                   m_queued_tasks.load(std::memory_order_relaxed) > 0;
+                        });
+
+                        if (m_stop.load(std::memory_order_relaxed))
+                            return;
+
+                        continue;
+                    }
                 }
 
-                if (!found_task) {
-                    // 4. Wait if no work found anywhere after spin-wait
-                    std::unique_lock<std::mutex> lock(m_mutex);
-                    m_cv_work.wait(lock, [this]() {
-                        return m_stop.load(std::memory_order_relaxed) ||
-                               m_queued_tasks.load(std::memory_order_relaxed) > 0;
-                    });
-
-                    if (m_stop.load(std::memory_order_relaxed))
-                        return;
-                }
-
+                // Execute Task
                 if (found_task) {
                     try {
                         task();
@@ -337,8 +320,9 @@ namespace Plexus {
                         // Task threw
                     }
 
-                    int remaining = m_active_tasks.fetch_sub(1, std::memory_order_release) - 1;
-                    if (remaining == 0) {
+                    // Simple unbatched atomic update
+                    int prev = m_active_tasks.fetch_sub(1, std::memory_order_release);
+                    if (prev == 1) {
                         std::lock_guard<std::mutex> lock(m_mutex);
                         m_cv_done.notify_all();
                     }
@@ -346,5 +330,4 @@ namespace Plexus {
             }
         }
     };
-
 }
