@@ -154,7 +154,9 @@ namespace Plexus {
                         break;
 
                     // Increment active count BEFORE enqueueing
-                    m_active_task_count.fetch_add(1);
+                    // This is necessary because the task might start executing immediately after
+                    // enqueue
+                    m_active_task_count.fetch_add(1, std::memory_order_relaxed);
 
                     try {
                         if (graph.nodes[dep_idx].thread_affinity == ThreadAffinity::Main) {
@@ -170,12 +172,25 @@ namespace Plexus {
                         }
                     } catch (...) {
                         // Rollback count for the child we failed to enqueue
-                        m_active_task_count.fetch_sub(1);
+                        int remaining =
+                            m_active_task_count.fetch_sub(1, std::memory_order_relaxed) - 1;
+
                         // Signal failure
                         m_cancel_graph_execution = true;
-                        std::lock_guard<std::mutex> lock(m_exception_mutex);
-                        m_exceptions.push_back(std::current_exception());
-                        // Continue loop? No, graph is broken.
+                        {
+                            std::lock_guard<std::mutex> lock(m_exception_mutex);
+                            m_exceptions.push_back(std::current_exception());
+                        }
+
+                        // CRITICAL: Notify main thread if count reached zero
+                        // This prevents main thread from waiting forever if the rollback brought
+                        // count to 0
+                        if (remaining == 0) {
+                            std::lock_guard<std::mutex> lock(m_main_queue_mutex);
+                            m_cv_main_thread.notify_all();
+                        }
+
+                        // Graph is broken, stop processing dependents
                         break;
                     }
                 }
