@@ -7,6 +7,20 @@
 
 namespace Plexus {
 
+    /**
+     * @brief Lock-free work-stealing deque based on the Chase-Lev algorithm.
+     *
+     * @note CURRENTLY UNUSED: ThreadPool uses RingBuffer with mutexes instead.
+     *       This implementation is preserved for potential future use.
+     *       See thread_pool.h for the current implementation.
+     *
+     * This is a single-producer, multi-consumer deque where:
+     * - The owner thread can push/pop from one end (LIFO for pop)
+     * - Thief threads can steal from the other end (FIFO)
+     * - Lock-free for better performance under contention
+     *
+     * Based on: "Dynamic Circular Work-Stealing Deque" by Chase and Lev (2005)
+     */
     template <typename T> class WorkStealingQueue {
     public:
         explicit WorkStealingQueue(size_t capacity = 4096) {
