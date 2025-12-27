@@ -124,8 +124,9 @@ namespace Plexus {
             if (tasks.empty())
                 return;
 
-            // Atomic increment, no lock needed
+            // Atomic increment
             m_active_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
+            m_queued_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
 
             int queue_idx = 0;
             // Use thread-local index if available, otherwise round-robin
@@ -157,10 +158,11 @@ namespace Plexus {
         template <typename F> void enqueue(F &&f, int priority = 4) {
             (void)priority;
 
-            if (m_stop)
+            if (m_stop.load(std::memory_order_relaxed))
                 throw std::runtime_error("ThreadPool stopped");
 
             m_active_tasks.fetch_add(1, std::memory_order_relaxed);
+            m_queued_tasks.fetch_add(1, std::memory_order_relaxed);
 
             // Determine target queue
             size_t target_idx = 0;
@@ -211,8 +213,9 @@ namespace Plexus {
         std::mutex m_mutex;
         std::condition_variable m_cv_work;
         std::condition_variable m_cv_done;
-        bool m_stop = false;
+        std::atomic<bool> m_stop{false};
         std::atomic<int> m_active_tasks{0}; // Atomic now as it's modified by multiple threads
+        std::atomic<int> m_queued_tasks{0};
 
         void worker_thread(int index) {
             t_worker_index = index;
@@ -233,24 +236,43 @@ namespace Plexus {
                     found_task = true;
                 }
 
-                // 1. Try local queue
+                // 1. Try local queue (LIFO for cache locality)
                 if (!found_task) {
                     std::lock_guard<std::mutex> lock(m_queues[index]->mutex);
-                    if (m_queues[index]->queue.pop(task)) {
+                    if (m_queues[index]->queue.pop_back(task)) {
+                        m_queued_tasks.fetch_sub(1, std::memory_order_relaxed);
                         found_task = true;
                     }
                 }
 
                 // 2. Steal from others
-                if (!found_task) {
-                    for (size_t i = 1; i < queue_count; ++i) {
-                        size_t steal_idx = (index + i) % queue_count;
+                if (!found_task && queue_count > 1) {
+                    // Xorshift32 for fast thread-local random numbers
+                    static thread_local uint32_t rng_state =
+                        std::hash<std::thread::id>{}(std::this_thread::get_id());
+                    rng_state ^= rng_state << 13;
+                    rng_state ^= rng_state >> 17;
+                    rng_state ^= rng_state << 5;
+
+                    // Random start offset to prevent convoy effects
+                    // We want an offset in [1, queue_count - 1]
+                    size_t start_offset = (rng_state % (queue_count - 1)) + 1;
+
+                    for (size_t i = 0; i < queue_count - 1; ++i) {
+                        // Ensure we iterate through all OTHER queues exactly once
+                        // shift ranges from 1 to queue_count-1
+                        size_t shift = ((start_offset + i - 1) % (queue_count - 1)) + 1;
+                        size_t steal_idx = (index + shift) % queue_count;
+
                         if (std::unique_lock<std::mutex> lock(m_queues[steal_idx]->mutex,
                                                               std::try_to_lock);
                             lock) {
                             if (!m_queues[steal_idx]->queue.empty()) {
                                 // Steal up to 16 tasks
-                                if (m_queues[steal_idx]->queue.pop_batch(stolen_batch, 16) > 0) {
+                                size_t count =
+                                    m_queues[steal_idx]->queue.pop_batch(stolen_batch, 16);
+                                if (count > 0) {
+                                    m_queued_tasks.fetch_sub(count, std::memory_order_relaxed);
                                     task = std::move(stolen_batch.back());
                                     stolen_batch.pop_back();
                                     found_task = true;
@@ -269,7 +291,8 @@ namespace Plexus {
                         // Check local again
                         {
                             std::lock_guard<std::mutex> lock(m_queues[index]->mutex);
-                            if (m_queues[index]->queue.pop(task)) {
+                            if (m_queues[index]->queue.pop_back(task)) {
+                                m_queued_tasks.fetch_sub(1, std::memory_order_relaxed);
                                 found_task = true;
                                 break;
                             }
@@ -284,9 +307,9 @@ namespace Plexus {
                         // Re-check local for new arrivals (most likely place for main thread to
                         // push if affinity, or random) Actually main thread round-robins.
                         if (i % 4 == 0) { // Periodically re-scan full stealing
-                            // copy-paste stealing logic? somewhat messy.
-                            // Let's just break the spin loop and let the outer loop retry?
-                            // No, outer loop has no spin limit logic.
+                                          // copy-paste stealing logic? somewhat messy.
+                                          // Let's just break the spin loop and let the outer loop
+                                          // retry? No, outer loop has no spin limit logic.
                         }
                     }
 
@@ -298,16 +321,12 @@ namespace Plexus {
                 if (!found_task) {
                     // 4. Wait if no work found anywhere after spin-wait
                     std::unique_lock<std::mutex> lock(m_mutex);
-                    if (m_stop)
-                        return;
+                    m_cv_work.wait(lock, [this]() {
+                        return m_stop.load(std::memory_order_relaxed) ||
+                               m_queued_tasks.load(std::memory_order_relaxed) > 0;
+                    });
 
-                    // Double check active tasks or similar?
-                    // To avoid missed notifications, we should ideally check queues again under
-                    // lock or use a semaphore. But checking all queues is slow. For now, simple
-                    // wait.
-                    m_cv_work.wait(lock);
-
-                    if (m_stop)
+                    if (m_stop.load(std::memory_order_relaxed))
                         return;
                 }
 

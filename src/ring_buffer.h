@@ -65,6 +65,17 @@ namespace Plexus {
             return true;
         }
 
+        bool pop_back(T &out_item) {
+            if (m_count == 0)
+                return false;
+
+            size_t tail_idx = (m_tail == 0 ? m_capacity : m_tail) - 1;
+            out_item = std::move(m_buffer[tail_idx]);
+            m_tail = tail_idx;
+            m_count--;
+            return true;
+        }
+
         size_t pop_batch(std::vector<T> &out_batch, size_t max_count) {
             if (m_count == 0)
                 return 0;
