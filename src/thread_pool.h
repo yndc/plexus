@@ -138,34 +138,23 @@ namespace Plexus {
             m_active_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
             m_queued_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
 
-            size_t queue_idx = 0;
-            // Use thread-local index if available, otherwise start at 0
             if (t_worker_index >= 0 && static_cast<size_t>(t_worker_index) < m_queues.size()) {
-                queue_idx = static_cast<size_t>(t_worker_index);
-            }
-
-            const size_t num_queues = m_queues.size();
-
-            for (auto &task : tasks) {
-                // Try to push to target worker queue
-                // Lock required because Chase-Lev push() assumes single-owner
-                size_t idx = queue_idx % num_queues;
-                bool pushed = false;
-                {
-                    std::lock_guard<std::mutex> lock(m_queues[idx]->push_mutex);
-                    pushed = m_queues[idx]->queue.push(std::move(task));
+                // Worker thread: push to OWN queue (lock-free, single-owner)
+                size_t worker_idx = static_cast<size_t>(t_worker_index);
+                for (auto &task : tasks) {
+                    if (!m_queues[worker_idx]->queue.push(std::move(task))) {
+                        // Queue full, spill to central
+                        std::lock_guard<std::mutex> lock(m_overflow_mutex);
+                        m_overflow_queue.push_back(std::move(task));
+                    }
                 }
-
-                if (!pushed) {
-                    // Queue full, spill to central overflow
-                    std::lock_guard<std::mutex> lock(m_overflow_mutex);
+            } else {
+                // External thread: push all to central queue (mutex-protected)
+                std::lock_guard<std::mutex> lock(m_overflow_mutex);
+                for (auto &task : tasks) {
                     m_overflow_queue.push_back(std::move(task));
                 }
-
-                // Move to next queue for load balancing
-                queue_idx = (queue_idx + 1) % num_queues;
             }
-            // Notify all because we pushed multiple tasks
             m_cv_work.notify_all();
         }
 
@@ -176,26 +165,17 @@ namespace Plexus {
             m_active_tasks.fetch_add(1, std::memory_order_relaxed);
             m_queued_tasks.fetch_add(1, std::memory_order_relaxed);
 
-            // Determine target queue
-            size_t target_idx = 0;
-            if (t_worker_index >= 0 && static_cast<size_t>(t_worker_index) < m_queues.size()) {
-                target_idx = static_cast<size_t>(t_worker_index);
-            } else {
-                // Round-robin for external threads
-                static std::atomic<size_t> next_idx{0};
-                target_idx = next_idx.fetch_add(1, std::memory_order_relaxed) % m_queues.size();
-            }
-
             Task task(std::forward<F>(f));
-            bool pushed = false;
-            {
-                // Lock required because Chase-Lev push() assumes single-owner
-                std::lock_guard<std::mutex> lock(m_queues[target_idx]->push_mutex);
-                pushed = m_queues[target_idx]->queue.push(std::move(task));
-            }
 
-            if (!pushed) {
-                // Queue full, spill to central overflow queue
+            if (t_worker_index >= 0 && static_cast<size_t>(t_worker_index) < m_queues.size()) {
+                // Worker thread: push to OWN queue (lock-free, single-owner)
+                if (!m_queues[static_cast<size_t>(t_worker_index)]->queue.push(std::move(task))) {
+                    // Queue full, spill to central
+                    std::lock_guard<std::mutex> lock(m_overflow_mutex);
+                    m_overflow_queue.push_back(std::move(task));
+                }
+            } else {
+                // External thread: push to central queue (mutex-protected)
                 std::lock_guard<std::mutex> lock(m_overflow_mutex);
                 m_overflow_queue.push_back(std::move(task));
             }
@@ -215,7 +195,6 @@ namespace Plexus {
 
     private:
         struct alignas(64) WorkQueue {
-            std::mutex push_mutex; // Protects push() - Chase-Lev requires single-owner for push
             WorkStealingQueue<Task> queue;
 
             explicit WorkQueue(std::size_t capacity = 4096) : queue(capacity) {}
@@ -243,20 +222,14 @@ namespace Plexus {
             while (true) {
                 std::optional<Task> task_opt;
 
-                // 1. Try local queue (LIFO for cache locality)
-                // Lock required because push and pop must not race
-                {
-                    std::lock_guard<std::mutex> lock(m_queues[index]->push_mutex);
-                    task_opt = m_queues[index]->queue.pop();
-                }
+                // 1. Try local queue (LIFO for cache locality) - LOCK-FREE
+                task_opt = m_queues[index]->queue.pop();
                 if (task_opt.has_value()) {
                     m_queued_tasks.fetch_sub(1, std::memory_order_relaxed);
                 } else {
-                    // 2. Steal from other worker queues
+                    // 2. Steal from other worker queues - LOCK-FREE
                     for (size_t i = 0; !task_opt.has_value() && i < queue_count - 1; ++i) {
                         size_t steal_idx = (index + i + 1) % queue_count;
-                        // Lock the queue we're stealing from
-                        std::lock_guard<std::mutex> lock(m_queues[steal_idx]->push_mutex);
                         task_opt = m_queues[steal_idx]->queue.steal();
                         if (task_opt.has_value()) {
                             m_queued_tasks.fetch_sub(1, std::memory_order_relaxed);
