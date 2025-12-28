@@ -78,10 +78,12 @@ namespace Plexus {
             // If t < b, it wasn't the last element; no one else touches idx.
 
             // CRITICAL: The slot MUST have a value here. If it doesn't, there's a race condition.
+#ifndef NDEBUG
             if (!m_buffer[idx].has_value()) {
                 // This should never happen in a correct Chase-Lev implementation
                 return std::nullopt;
             }
+#endif
 
             std::optional<T> out;
             out.emplace(std::move(*m_buffer[idx]));
@@ -113,10 +115,12 @@ namespace Plexus {
             // bottom.load(acquire) above synchronizes with push's bottom.store(release),
             // so the buffer slot is visible here.
             // CRITICAL: The slot MUST have a value here. If it doesn't, there's a race condition.
+#ifndef NDEBUG
             if (!m_buffer[idx].has_value()) {
                 // This should never happen in a correct Chase-Lev implementation
                 return std::nullopt;
             }
+#endif
 
             std::optional<T> out;
             out.emplace(std::move(*m_buffer[idx]));
