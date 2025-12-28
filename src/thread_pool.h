@@ -115,11 +115,12 @@ namespace Plexus {
         }
 
         ~ThreadPool() {
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_stop = true;
+            m_stop.store(true, std::memory_order_relaxed);
+            // Wake all workers using per-worker CVs
+            for (auto &q : m_queues) {
+                std::lock_guard<std::mutex> lock(q->mutex);
+                q->cv.notify_one();
             }
-            m_cv_work.notify_all();
             for (auto &t : m_threads) {
                 if (t.joinable()) {
                     t.join();
@@ -155,16 +156,16 @@ namespace Plexus {
                     m_overflow_queue.push_back(std::move(task));
                 }
             }
-            // Smart wake-up: only wake enough workers to handle the tasks
-            int sleeping = m_sleeping_workers.load(std::memory_order_relaxed);
-            int to_wake = std::min(static_cast<int>(tasks.size()), sleeping);
-            if (to_wake >= sleeping / 2 || to_wake > 4) {
-                // Wake many workers - use notify_all() to avoid loop overhead
-                m_cv_work.notify_all();
-            } else {
-                // Wake few workers - use targeted notify_one()
-                for (int i = 0; i < to_wake; ++i) {
-                    m_cv_work.notify_one();
+            // Smart wake-up: wake specific workers using per-worker CVs
+            size_t tasks_count = tasks.size();
+            size_t workers_woken = 0;
+            for (size_t i = 0; i < m_queues.size() && workers_woken < tasks_count; ++i) {
+                if (m_queues[i]->sleeping.load(std::memory_order_acquire)) {
+                    {
+                        std::lock_guard<std::mutex> lock(m_queues[i]->mutex);
+                    }
+                    m_queues[i]->cv.notify_one();
+                    ++workers_woken;
                 }
             }
         }
@@ -190,7 +191,16 @@ namespace Plexus {
                 std::lock_guard<std::mutex> lock(m_overflow_mutex);
                 m_overflow_queue.push_back(std::move(task));
             }
-            m_cv_work.notify_one();
+            // Wake one sleeping worker using per-worker CV
+            for (size_t i = 0; i < m_queues.size(); ++i) {
+                if (m_queues[i]->sleeping.load(std::memory_order_acquire)) {
+                    {
+                        std::lock_guard<std::mutex> lock(m_queues[i]->mutex);
+                    }
+                    m_queues[i]->cv.notify_one();
+                    break;
+                }
+            }
         }
 
         void wait() {
@@ -207,6 +217,9 @@ namespace Plexus {
     private:
         struct alignas(64) WorkQueue {
             WorkStealingQueue<Task> queue;
+            std::mutex mutex;                  // Per-worker mutex for CV
+            std::condition_variable cv;        // Per-worker condition variable
+            std::atomic<bool> sleeping{false}; // Is this worker sleeping?
 
             explicit WorkQueue(std::size_t capacity = 4096) : queue(capacity) {}
         };
@@ -220,12 +233,10 @@ namespace Plexus {
 
         // Global synchronization for completion and stopping
         std::mutex m_mutex;
-        std::condition_variable m_cv_work;
         std::condition_variable m_cv_done;
         std::atomic<bool> m_stop{false};
         std::atomic<int> m_active_tasks{0};
         std::atomic<int> m_queued_tasks{0};
-        std::atomic<int> m_sleeping_workers{0}; // Track workers waiting on CV
 
         void worker_thread(int index) {
             t_worker_index = index;
@@ -288,15 +299,15 @@ namespace Plexus {
                     }
                 }
 
-                // 5. Wait for work (blocking)
+                // 5. Wait for work (blocking) - use per-worker CV
                 if (!task_opt.has_value()) {
-                    std::unique_lock<std::mutex> lock(m_mutex);
-                    m_sleeping_workers.fetch_add(1, std::memory_order_relaxed);
-                    m_cv_work.wait(lock, [this]() {
+                    std::unique_lock<std::mutex> lock(m_queues[index]->mutex);
+                    m_queues[index]->sleeping.store(true, std::memory_order_relaxed);
+                    m_queues[index]->cv.wait(lock, [this]() {
                         return m_stop.load(std::memory_order_relaxed) ||
                                m_queued_tasks.load(std::memory_order_relaxed) > 0;
                     });
-                    m_sleeping_workers.fetch_sub(1, std::memory_order_relaxed);
+                    m_queues[index]->sleeping.store(false, std::memory_order_relaxed);
 
                     if (m_stop.load(std::memory_order_relaxed))
                         return;
