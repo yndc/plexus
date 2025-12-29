@@ -11,6 +11,14 @@ namespace Plexus {
     class ThreadPool;
 
     /**
+     * @brief Execution mode for the Executor.
+     */
+    enum class ExecutionMode {
+        Parallel,  ///< Use thread pool for parallel execution (default)
+        Sequential ///< Run all tasks on the calling thread (for debugging)
+    };
+
+    /**
      * @brief A generic executor for processing ExecutionGraphs.
      *
      * The Executor takes a static ExecutionGraph and processes it dynamically using
@@ -42,8 +50,9 @@ namespace Plexus {
          * completed.
          *
          * @param graph The dependency graph to execute.
+         * @param mode Execution mode. Use Sequential for single-threaded debugging.
          */
-        void run(const ExecutionGraph &graph);
+        void run(const ExecutionGraph &graph, ExecutionMode mode = ExecutionMode::Parallel);
 
         /**
          * @brief Callback for profiling.
@@ -58,6 +67,7 @@ namespace Plexus {
 
     private:
         void run_task(const ExecutionGraph &graph, std::atomic<int> *counters, int node_idx);
+        void run_sequential(const ExecutionGraph &graph);
 
         std::unique_ptr<ThreadPool> m_owned_pool;
         ThreadPool *m_pool;

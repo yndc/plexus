@@ -12,9 +12,15 @@ namespace Plexus {
 
     Executor::~Executor() = default;
 
-    void Executor::run(const ExecutionGraph &graph) {
+    void Executor::run(const ExecutionGraph &graph, ExecutionMode mode) {
         if (graph.nodes.empty())
             return;
+
+        // Sequential mode: run all tasks on the calling thread
+        if (mode == ExecutionMode::Sequential) {
+            run_sequential(graph);
+            return;
+        }
 
         auto start = std::chrono::high_resolution_clock::now();
 
@@ -91,6 +97,62 @@ namespace Plexus {
 
         // Rethrow exceptions
         std::lock_guard<std::mutex> lock(m_exception_mutex);
+        if (!m_exceptions.empty()) {
+            std::rethrow_exception(m_exceptions.front());
+        }
+    }
+
+    void Executor::run_sequential(const ExecutionGraph &graph) {
+        auto start = std::chrono::high_resolution_clock::now();
+
+        // Reset State
+        m_exceptions.clear();
+
+        // Use simple int counters (no atomics needed for single-threaded)
+        std::vector<int> counters(graph.nodes.size());
+        for (size_t i = 0; i < graph.nodes.size(); ++i) {
+            counters[i] = graph.nodes[i].initial_dependencies;
+        }
+
+        // Queue of ready nodes
+        std::vector<int> ready_queue(graph.entry_nodes.begin(), graph.entry_nodes.end());
+
+        while (!ready_queue.empty()) {
+            int node_idx = ready_queue.back();
+            ready_queue.pop_back();
+
+            // Execute the task
+            try {
+                if (graph.nodes[node_idx].work) {
+                    graph.nodes[node_idx].work();
+                }
+            } catch (...) {
+                m_exceptions.push_back(std::current_exception());
+
+                auto policy = graph.nodes[node_idx].error_policy;
+                if (policy == ErrorPolicy::CancelGraph) {
+                    break; // Stop execution entirely
+                } else if (policy == ErrorPolicy::CancelDependents) {
+                    continue; // Skip triggering dependents
+                }
+                // ErrorPolicy::Continue: fall through to trigger dependents
+            }
+
+            // Trigger dependents
+            for (int dep_idx : graph.nodes[node_idx].dependents) {
+                if (--counters[dep_idx] == 0) {
+                    ready_queue.push_back(dep_idx);
+                }
+            }
+        }
+
+        if (m_profiler_callback) {
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double, std::milli> diff = end - start;
+            m_profiler_callback("Executor::run_sequential", diff.count());
+        }
+
+        // Rethrow first exception
         if (!m_exceptions.empty()) {
             std::rethrow_exception(m_exceptions.front());
         }
