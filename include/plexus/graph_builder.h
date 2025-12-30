@@ -22,6 +22,13 @@ namespace Plexus {
         explicit GraphBuilder(Context &ctx);
 
         /**
+         * @brief Registers a node group (execution phase).
+         * @param config The group configuration.
+         * @return NodeGroupID The unique ID of the registered group.
+         */
+        NodeGroupID add_group(NodeGroupConfig config);
+
+        /**
          * @brief Registers a node for inclusion in the graph.
          * @param config The node configuration.
          * @return NodeID The unique ID of the registered node.
@@ -41,6 +48,7 @@ namespace Plexus {
 
     private:
         Context &m_ctx;
+        std::vector<NodeGroupConfig> m_groups;
         std::vector<NodeConfig> m_nodes;
     };
 

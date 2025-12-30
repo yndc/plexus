@@ -2,6 +2,7 @@
 #include "plexus/context.h"
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,21 @@ namespace Plexus {
 
     /// @brief Unique identifier for a registered Node.
     using NodeID = uint32_t;
+
+    /// @brief Unique identifier for a Node Group (phase).
+    using NodeGroupID = uint32_t;
+
+    /**
+     * @brief Configuration for a node group (execution phase).
+     *
+     * Groups allow organizing nodes into phases with explicit ordering.
+     * All nodes in a group that has `run_after` dependencies will wait
+     * for all nodes in those dependency groups to complete.
+     */
+    struct NodeGroupConfig {
+        std::string name;                   ///< Human-readable name for debugging.
+        std::vector<NodeGroupID> run_after; ///< Groups that must complete before this group starts.
+    };
 
     /**
      * @brief Defines behavior when the node's work function throws an exception.
@@ -68,5 +84,28 @@ namespace Plexus {
          * @brief Specific thread requirement. Default is Any.
          */
         ThreadAffinity thread_affinity = ThreadAffinity::Any;
+
+        /**
+         * @brief Optional group this node belongs to.
+         *
+         * If set, this node inherits the group's ordering constraints.
+         * Nodes in a group with `run_after` dependencies will wait for
+         * all nodes in those dependency groups to complete.
+         */
+        std::optional<NodeGroupID> group_id;
+
+        /**
+         * @brief Groups that must complete before this node can start.
+         *
+         * This allows standalone nodes to synchronize with entire groups.
+         */
+        std::vector<NodeGroupID> run_after_group;
+
+        /**
+         * @brief Groups that must wait for this node to complete.
+         *
+         * All nodes in the specified groups will depend on this node.
+         */
+        std::vector<NodeGroupID> run_before_group;
     };
 }

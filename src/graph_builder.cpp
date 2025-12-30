@@ -9,6 +9,12 @@ namespace Plexus {
 
     GraphBuilder::GraphBuilder(Context &ctx) : m_ctx(ctx) {}
 
+    NodeGroupID GraphBuilder::add_group(NodeGroupConfig config) {
+        NodeGroupID id = static_cast<NodeGroupID>(m_groups.size());
+        m_groups.push_back(std::move(config));
+        return id;
+    }
+
     NodeID GraphBuilder::add_node(NodeConfig config) {
         NodeID id = static_cast<NodeID>(m_nodes.size());
         m_nodes.push_back(std::move(config));
@@ -82,6 +88,77 @@ namespace Plexus {
                 if (dependent < n && dependent != i) {
                     adj[i].push_back(dependent);
                     indegree[dependent]++;
+                }
+            }
+        }
+
+        // 1b. Build group membership map
+        std::map<NodeGroupID, std::vector<int>> group_members;
+        for (size_t i = 0; i < n; ++i) {
+            if (m_nodes[i].group_id.has_value()) {
+                group_members[m_nodes[i].group_id.value()].push_back(i);
+            }
+        }
+
+        // Helper to add edge if not self-loop
+        auto add_edge = [&](int from, int to) {
+            if (from != to) {
+                adj[from].push_back(to);
+                indegree[to]++;
+            }
+        };
+
+        // 1c. Process group-level dependencies (NodeGroupConfig::run_after)
+        // All nodes in a group depend on all nodes in the group's run_after groups
+        for (size_t i = 0; i < n; ++i) {
+            const auto &node = m_nodes[i];
+            if (!node.group_id.has_value())
+                continue;
+
+            NodeGroupID gid = node.group_id.value();
+            if (gid >= m_groups.size())
+                continue;
+
+            const auto &group = m_groups[gid];
+            for (NodeGroupID dep_gid : group.run_after) {
+                if (dep_gid >= m_groups.size())
+                    continue;
+                auto it = group_members.find(dep_gid);
+                if (it == group_members.end())
+                    continue;
+
+                for (int dep_node_idx : it->second) {
+                    add_edge(dep_node_idx, static_cast<int>(i));
+                }
+            }
+        }
+
+        // 1d. Process node-level run_after_group
+        // This node depends on all nodes in the specified groups
+        for (size_t i = 0; i < n; ++i) {
+            const auto &node = m_nodes[i];
+            for (NodeGroupID gid : node.run_after_group) {
+                auto it = group_members.find(gid);
+                if (it == group_members.end())
+                    continue;
+
+                for (int dep_node_idx : it->second) {
+                    add_edge(dep_node_idx, static_cast<int>(i));
+                }
+            }
+        }
+
+        // 1e. Process node-level run_before_group
+        // All nodes in the specified groups depend on this node
+        for (size_t i = 0; i < n; ++i) {
+            const auto &node = m_nodes[i];
+            for (NodeGroupID gid : node.run_before_group) {
+                auto it = group_members.find(gid);
+                if (it == group_members.end())
+                    continue;
+
+                for (int dep_node_idx : it->second) {
+                    add_edge(static_cast<int>(i), dep_node_idx);
                 }
             }
         }
