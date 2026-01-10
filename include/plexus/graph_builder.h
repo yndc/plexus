@@ -135,6 +135,9 @@ namespace Plexus {
         NodeID add_auto_node_impl(const std::string &name, Func &&work,
                                   std::index_sequence<Indices...>,
                                   Resource<ResourceTypes> &...resources) {
+            // Validate that each Resource<T> matches the function's parameter type
+            (detail::check_resource_type_match<Indices, Func, ResourceTypes>(), ...);
+
             return add_node(
                 {.debug_name = name,
                  .work_function =
@@ -156,14 +159,6 @@ namespace Plexus {
             } else {
                 return res.get_mut(); // T&
             }
-        }
-
-        // Helper to build dependencies with inferred access types
-        template <typename Func, std::size_t... Indices, typename... ResourceTypes>
-        static std::vector<Dependency>
-        make_auto_dependencies(std::index_sequence<Indices...>,
-                               Resource<ResourceTypes> &...resources) {
-            return {Dependency{resources.id(), detail::infer_access_at<Indices, Func>()}...};
         }
     };
 
