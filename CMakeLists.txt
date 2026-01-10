@@ -27,6 +27,7 @@ add_library(plexusCore
     src/graph_builder.cpp
     src/execution_graph.cpp
     src/executor.cpp
+    src/runtime.cpp
 )
 target_include_directories(plexusCore PUBLIC include)
 
@@ -48,6 +49,7 @@ add_executable(plexusTests
     tests/test_ws_queue.cpp
     tests/test_ring_buffer.cpp
     tests/test_thread_pool.cpp
+    tests/test_runtime.cpp
 )
 target_link_libraries(plexusTests PRIVATE plexusCore gtest_main)
 target_include_directories(plexusTests PRIVATE src)

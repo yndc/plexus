@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -11,7 +12,9 @@
 
 namespace Plexus {
 
-    inline thread_local int t_worker_index = -1;
+    // Thread-local worker context
+    inline thread_local size_t t_worker_index = SIZE_MAX;
+    inline thread_local size_t t_worker_count = 0;
 
     /**
      * @brief A high-performance, work-stealing thread pool.
@@ -139,9 +142,9 @@ namespace Plexus {
             m_active_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
             m_queued_tasks.fetch_add(static_cast<int>(tasks.size()), std::memory_order_relaxed);
 
-            if (t_worker_index >= 0 && static_cast<size_t>(t_worker_index) < m_queues.size()) {
+            if (t_worker_index < m_queues.size()) {
                 // Worker thread: push to OWN queue (lock-free, single-owner)
-                size_t worker_idx = static_cast<size_t>(t_worker_index);
+                size_t worker_idx = t_worker_index;
                 for (auto &task : tasks) {
                     if (!m_queues[worker_idx]->queue.push(std::move(task))) {
                         // Queue full, spill to central
@@ -179,9 +182,9 @@ namespace Plexus {
 
             Task task(std::forward<F>(f));
 
-            if (t_worker_index >= 0 && static_cast<size_t>(t_worker_index) < m_queues.size()) {
+            if (t_worker_index < m_queues.size()) {
                 // Worker thread: push to OWN queue (lock-free, single-owner)
-                if (!m_queues[static_cast<size_t>(t_worker_index)]->queue.push(std::move(task))) {
+                if (!m_queues[t_worker_index]->queue.push(std::move(task))) {
                     // Queue full, spill to central
                     std::lock_guard<std::mutex> lock(m_overflow_mutex);
                     m_overflow_queue.push_back(std::move(task));
@@ -214,6 +217,11 @@ namespace Plexus {
             (void)capacity;
         }
 
+        /**
+         * @brief Returns the number of worker threads.
+         */
+        size_t worker_count() const { return m_queues.size(); }
+
     private:
         struct alignas(64) WorkQueue {
             WorkStealingQueue<Task> queue;
@@ -239,7 +247,8 @@ namespace Plexus {
         std::atomic<int> m_queued_tasks{0};
 
         void worker_thread(int index) {
-            t_worker_index = index;
+            t_worker_index = static_cast<size_t>(index);
+            t_worker_count = m_queues.size();
             const size_t queue_count = m_queues.size();
             int local_task_count = 0; // Track tasks locally for batch decrement
 

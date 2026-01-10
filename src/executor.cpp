@@ -167,6 +167,21 @@ namespace Plexus {
             // Has main thread affinity tasks - run the main thread loop synchronously
             auto start = std::chrono::high_resolution_clock::now();
 
+            // Set main thread as designated worker index = worker_count()
+            size_t prev_index = t_worker_index;
+            size_t prev_count = t_worker_count;
+            t_worker_index = m_pool->worker_count(); // Designated main thread index
+            t_worker_count = m_pool->worker_count();
+
+            struct ContextGuard {
+                size_t &idx, &cnt;
+                size_t prev_idx, prev_cnt;
+                ~ContextGuard() {
+                    idx = prev_idx;
+                    cnt = prev_cnt;
+                }
+            } guard{t_worker_index, t_worker_count, prev_index, prev_count};
+
             while (async_state->active_task_count.load(std::memory_order_acquire) > 0) {
                 // Drain Main Queue
                 std::vector<int> local_main_tasks;
@@ -204,6 +219,21 @@ namespace Plexus {
     void Executor::run_sequential(const ExecutionGraph &graph,
                                   std::shared_ptr<AsyncHandle::State> async_state) {
         auto start = std::chrono::high_resolution_clock::now();
+
+        // Set worker context for sequential mode (single logical worker)
+        size_t prev_index = t_worker_index;
+        size_t prev_count = t_worker_count;
+        t_worker_index = 0;
+        t_worker_count = 1;
+
+        struct ContextGuard {
+            size_t &idx, &cnt;
+            size_t prev_idx, prev_cnt;
+            ~ContextGuard() {
+                idx = prev_idx;
+                cnt = prev_cnt;
+            }
+        } guard{t_worker_index, t_worker_count, prev_index, prev_count};
 
         // Use simple int counters (no atomics needed for single-threaded)
         std::vector<int> counters(graph.nodes.size());

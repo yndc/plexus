@@ -147,7 +147,7 @@ TEST(ThreadPoolTest, WorkerThreadIdentity) {
     // Enqueue from main thread (non-worker)
     for (int i = 0; i < 10; ++i) {
         pool.enqueue([&worker_count, &non_worker_count]() {
-            if (t_worker_index >= 0) {
+            if (t_worker_index != SIZE_MAX) {
                 worker_count++;
             } else {
                 non_worker_count++;
