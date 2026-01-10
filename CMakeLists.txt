@@ -45,6 +45,9 @@ add_executable(plexusTests
     tests/test_stress_loop.cpp
     tests/test_node_groups.cpp
     tests/test_resource.cpp
+    tests/test_ws_queue.cpp
+    tests/test_ring_buffer.cpp
+    tests/test_thread_pool.cpp
 )
 target_link_libraries(plexusTests PRIVATE plexusCore gtest_main)
 target_include_directories(plexusTests PRIVATE src)
