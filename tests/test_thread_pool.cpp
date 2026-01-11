@@ -11,13 +11,13 @@ using namespace Plexus;
 // ===========================================================================
 
 TEST(FixedFunctionTest, DefaultConstruction) {
-    ThreadPool::FixedFunction ff;
+    FixedFunction<64> ff;
     EXPECT_FALSE(static_cast<bool>(ff));
 }
 
 TEST(FixedFunctionTest, LambdaConstruction) {
     int value = 0;
-    ThreadPool::FixedFunction ff([&value]() { value = 42; });
+    FixedFunction<64> ff([&value]() { value = 42; });
 
     EXPECT_TRUE(static_cast<bool>(ff));
     ff();
@@ -26,9 +26,9 @@ TEST(FixedFunctionTest, LambdaConstruction) {
 
 TEST(FixedFunctionTest, MoveConstruction) {
     int value = 0;
-    ThreadPool::FixedFunction ff1([&value]() { value = 100; });
+    FixedFunction<64> ff1([&value]() { value = 100; });
 
-    ThreadPool::FixedFunction ff2(std::move(ff1));
+    FixedFunction<64> ff2(std::move(ff1));
     EXPECT_TRUE(static_cast<bool>(ff2));
     // ff1 should be empty after move
     EXPECT_FALSE(static_cast<bool>(ff1));
@@ -39,8 +39,8 @@ TEST(FixedFunctionTest, MoveConstruction) {
 
 TEST(FixedFunctionTest, MoveAssignment) {
     int value = 0;
-    ThreadPool::FixedFunction ff1([&value]() { value = 200; });
-    ThreadPool::FixedFunction ff2;
+    FixedFunction<64> ff1([&value]() { value = 200; });
+    FixedFunction<64> ff2;
 
     ff2 = std::move(ff1);
     EXPECT_TRUE(static_cast<bool>(ff2));
@@ -52,7 +52,7 @@ TEST(FixedFunctionTest, MoveAssignment) {
 
 TEST(FixedFunctionTest, SelfMoveAssignment) {
     int value = 0;
-    ThreadPool::FixedFunction ff([&value]() { value = 300; });
+    FixedFunction<64> ff([&value]() { value = 300; });
 
 // Suppress self-move warning for this specific test
 #pragma GCC diagnostic push
@@ -68,7 +68,7 @@ TEST(FixedFunctionTest, SelfMoveAssignment) {
 
 TEST(FixedFunctionTest, CaptureByValue) {
     int captured = 42;
-    ThreadPool::FixedFunction ff([captured]() mutable {
+    FixedFunction<64> ff([captured]() mutable {
         // Lambda captures by value
         captured += 1;
     });

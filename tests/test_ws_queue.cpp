@@ -1,89 +1,121 @@
 #include "../src/work_stealing_queue.h"
 #include <atomic>
 #include <gtest/gtest.h>
+#include <memory>
 #include <thread>
 #include <vector>
 
 using namespace Plexus;
 
+// Simple test type for queue testing
+struct TestValue {
+    int value;
+    explicit TestValue(int v = 0) : value(v) {}
+};
+
 TEST(WorkStealingQueueTest, BasicPushPop) {
-    WorkStealingQueue<int> q(16);
-    EXPECT_TRUE(q.push(1));
-    EXPECT_TRUE(q.push(2));
+    WorkStealingQueue<TestValue> q(16);
+
+    auto *v1 = new TestValue(1);
+    auto *v2 = new TestValue(2);
+
+    EXPECT_TRUE(q.push(v1));
+    EXPECT_TRUE(q.push(v2));
     EXPECT_EQ(q.size_approx(), 2u);
 
-    auto v = q.pop();
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(*v, 2); // LIFO
+    auto *p = q.pop();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->value, 2); // LIFO
+    delete p;
 
-    v = q.pop();
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(*v, 1);
+    p = q.pop();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->value, 1);
+    delete p;
 
     EXPECT_TRUE(q.empty_approx());
 }
 
 TEST(WorkStealingQueueTest, StealFIFO) {
-    WorkStealingQueue<int> q(16);
-    q.push(10);
-    q.push(20);
+    WorkStealingQueue<TestValue> q(16);
 
-    auto v = q.steal(); // FIFO
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(*v, 10);
+    q.push(new TestValue(10));
+    q.push(new TestValue(20));
 
-    auto v2 = q.pop(); // LIFO
-    ASSERT_TRUE(v2.has_value());
-    EXPECT_EQ(*v2, 20);
+    auto *v = q.steal(); // FIFO
+    ASSERT_NE(v, nullptr);
+    EXPECT_EQ(v->value, 10);
+    delete v;
+
+    auto *v2 = q.pop(); // LIFO
+    ASSERT_NE(v2, nullptr);
+    EXPECT_EQ(v2->value, 20);
+    delete v2;
 
     EXPECT_TRUE(q.empty_approx());
 }
 
-TEST(WorkStealingQueueTest, EmptyPopReturnsNullopt) {
-    WorkStealingQueue<int> q(16);
-    EXPECT_FALSE(q.pop().has_value());
+TEST(WorkStealingQueueTest, EmptyPopReturnsNullptr) {
+    WorkStealingQueue<TestValue> q(16);
+    EXPECT_EQ(q.pop(), nullptr);
 }
 
-TEST(WorkStealingQueueTest, EmptyStealReturnsNullopt) {
-    WorkStealingQueue<int> q(16);
-    EXPECT_FALSE(q.steal().has_value());
+TEST(WorkStealingQueueTest, EmptyStealReturnsNullptr) {
+    WorkStealingQueue<TestValue> q(16);
+    EXPECT_EQ(q.steal(), nullptr);
 }
 
 TEST(WorkStealingQueueTest, CapacityPowerOfTwo) {
-    WorkStealingQueue<int> q(10); // Not a power of 2
-    EXPECT_EQ(q.capacity(), 16u); // Rounded up to 16
+    WorkStealingQueue<TestValue> q(10); // Not a power of 2
+    EXPECT_EQ(q.capacity(), 16u);       // Rounded up to 16
 
-    WorkStealingQueue<int> q2(1);
+    WorkStealingQueue<TestValue> q2(1);
     EXPECT_EQ(q2.capacity(), 2u); // Minimum is 2
 }
 
 TEST(WorkStealingQueueTest, QueueFullReturnsFalse) {
-    WorkStealingQueue<int> q(4);
-    EXPECT_TRUE(q.push(1));
-    EXPECT_TRUE(q.push(2));
-    EXPECT_TRUE(q.push(3));
-    EXPECT_TRUE(q.push(4));
-    EXPECT_FALSE(q.push(5)); // Full
+    WorkStealingQueue<TestValue> q(4);
+
+    auto *v1 = new TestValue(1);
+    auto *v2 = new TestValue(2);
+    auto *v3 = new TestValue(3);
+    auto *v4 = new TestValue(4);
+    auto *v5 = new TestValue(5);
+
+    EXPECT_TRUE(q.push(v1));
+    EXPECT_TRUE(q.push(v2));
+    EXPECT_TRUE(q.push(v3));
+    EXPECT_TRUE(q.push(v4));
+    EXPECT_FALSE(q.push(v5)); // Full
+
+    delete v5; // Not pushed, must cleanup
+
+    // Cleanup pushed items
+    while (auto *p = q.pop()) {
+        delete p;
+    }
 }
 
 TEST(WorkStealingQueueTest, Contention) {
-    WorkStealingQueue<int> q(1024);
+    WorkStealingQueue<TestValue> q(1024);
     std::atomic<bool> done{false};
     std::atomic<int> stolen_count{0};
 
     // Thief thread
     std::thread thief([&]() {
         while (!done) {
-            auto v = q.steal();
-            if (v.has_value()) {
+            auto *v = q.steal();
+            if (v) {
+                delete v;
                 stolen_count++;
             }
         }
         // Drain rest
         while (true) {
-            auto v = q.steal();
-            if (!v.has_value())
+            auto *v = q.steal();
+            if (!v)
                 break;
+            delete v;
             stolen_count++;
         }
     });
@@ -92,18 +124,23 @@ TEST(WorkStealingQueueTest, Contention) {
     int local_popped = 0;
 
     for (int i = 0; i < pushed_count; ++i) {
-        while (!q.push(i)) {
+        auto *node = new TestValue(i);
+        while (!q.push(node)) {
             // Full, pop some
-            auto v = q.pop();
-            if (v.has_value())
+            auto *v = q.pop();
+            if (v) {
+                delete v;
                 local_popped++;
+            }
         }
 
         // Randomly pop locally too
         if (i % 3 == 0) {
-            auto v = q.pop();
-            if (v.has_value())
+            auto *v = q.pop();
+            if (v) {
+                delete v;
                 local_popped++;
+            }
         }
     }
 
@@ -112,9 +149,10 @@ TEST(WorkStealingQueueTest, Contention) {
 
     // Drain local
     while (true) {
-        auto v = q.pop();
-        if (!v.has_value())
+        auto *v = q.pop();
+        if (!v)
             break;
+        delete v;
         local_popped++;
     }
 
@@ -122,7 +160,7 @@ TEST(WorkStealingQueueTest, Contention) {
 }
 
 TEST(WorkStealingQueueTest, MultipleThieves) {
-    WorkStealingQueue<int> q(4096);
+    WorkStealingQueue<TestValue> q(4096);
     std::atomic<bool> done{false};
     std::atomic<int> total_stolen{0};
     constexpr int NUM_THIEVES = 4;
@@ -132,15 +170,17 @@ TEST(WorkStealingQueueTest, MultipleThieves) {
         thieves.emplace_back([&]() {
             int local_stolen = 0;
             while (!done) {
-                auto v = q.steal();
-                if (v.has_value()) {
+                auto *v = q.steal();
+                if (v) {
+                    delete v;
                     local_stolen++;
                 }
             }
             while (true) {
-                auto v = q.steal();
-                if (!v.has_value())
+                auto *v = q.steal();
+                if (!v)
                     break;
+                delete v;
                 local_stolen++;
             }
             total_stolen.fetch_add(local_stolen, std::memory_order_relaxed);
@@ -151,10 +191,13 @@ TEST(WorkStealingQueueTest, MultipleThieves) {
     int local_popped = 0;
 
     for (int i = 0; i < PUSH_COUNT; ++i) {
-        while (!q.push(i)) {
-            auto v = q.pop();
-            if (v.has_value())
+        auto *node = new TestValue(i);
+        while (!q.push(node)) {
+            auto *v = q.pop();
+            if (v) {
+                delete v;
                 local_popped++;
+            }
         }
     }
 
@@ -164,20 +207,12 @@ TEST(WorkStealingQueueTest, MultipleThieves) {
     }
 
     while (true) {
-        auto v = q.pop();
-        if (!v.has_value())
+        auto *v = q.pop();
+        if (!v)
             break;
+        delete v;
         local_popped++;
     }
 
     EXPECT_EQ(local_popped + total_stolen.load(), PUSH_COUNT);
-}
-
-TEST(WorkStealingQueueTest, MoveOnlyType) {
-    WorkStealingQueue<std::unique_ptr<int>> q(16);
-    q.push(std::make_unique<int>(42));
-
-    auto v = q.pop();
-    ASSERT_TRUE(v.has_value());
-    EXPECT_EQ(**v, 42);
 }

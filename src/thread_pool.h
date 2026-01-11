@@ -1,11 +1,12 @@
 #pragma once
+
+#include "task_node_pool.h"
 #include "work_stealing_queue.h"
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
-#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -27,78 +28,12 @@ namespace Plexus {
      * - **Central Overflow Queue**: When worker queues are full, tasks spill to a mutex-protected
      * central queue.
      * - **LIFO Scheduling**: Local workers pop from the back (LIFO) for better cache locality.
+     * - **TaskNode Pool**: Uses a lock-free pool for task nodes, eliminating per-task allocation.
      */
     class ThreadPool {
     public:
-        // Fixed storage size to accommodate Executor's capture (approx 28-32 bytes) +
-        // vtable/overhead
-        static constexpr size_t kTaskStorageSize = 64;
-
-        // Custom Type Erasure for fixed-size storage to avoid heap allocations
-        class FixedFunction {
-        public:
-            FixedFunction() = default;
-
-            template <typename F> FixedFunction(F &&f) {
-                static_assert(sizeof(F) <= kTaskStorageSize, "Task too large for FixedFunction");
-                static_assert(std::is_trivially_copyable_v<F> || std::is_move_constructible_v<F>,
-                              "Task must be movable");
-
-                new (m_storage) F(std::forward<F>(f));
-                m_invoke = [](void *storage) { (*reinterpret_cast<F *>(storage))(); };
-                m_dtor = [](void *storage) { reinterpret_cast<F *>(storage)->~F(); };
-                m_move = [](void *dest, void *src) {
-                    new (dest) F(std::move(*reinterpret_cast<F *>(src)));
-                };
-            }
-
-            FixedFunction(FixedFunction &&other) noexcept {
-                if (other.m_invoke) {
-                    other.m_move(m_storage, other.m_storage);
-                    m_invoke = other.m_invoke;
-                    m_dtor = other.m_dtor;
-                    m_move = other.m_move;
-                    other.m_invoke = nullptr; // Mark source as empty
-                }
-            }
-
-            FixedFunction &operator=(FixedFunction &&other) noexcept {
-                if (this != &other) {
-                    if (m_invoke)
-                        m_dtor(m_storage);
-                    if (other.m_invoke) {
-                        other.m_move(m_storage, other.m_storage);
-                        m_invoke = other.m_invoke;
-                        m_dtor = other.m_dtor;
-                        m_move = other.m_move;
-                        other.m_invoke = nullptr;
-                    } else {
-                        m_invoke = nullptr;
-                    }
-                }
-                return *this;
-            }
-
-            ~FixedFunction() {
-                if (m_invoke)
-                    m_dtor(m_storage);
-            }
-
-            void operator()() {
-                if (m_invoke)
-                    m_invoke(m_storage);
-            }
-
-            explicit operator bool() const { return m_invoke != nullptr; }
-
-        private:
-            alignas(std::max_align_t) std::byte m_storage[kTaskStorageSize];
-            void (*m_invoke)(void *) = nullptr;
-            void (*m_dtor)(void *) = nullptr;
-            void (*m_move)(void *dest, void *src) = nullptr;
-        };
-
-        using Task = FixedFunction;
+        // Use the FixedFunction from task_node_pool.h
+        using Task = FixedFunction<64>;
 
         ThreadPool(int num_threads = 0) {
             unsigned int count = num_threads ? num_threads : std::thread::hardware_concurrency();
@@ -129,6 +64,9 @@ namespace Plexus {
                     t.join();
                 }
             }
+            // Pool destructor will clean up any remaining nodes in freelist.
+            // Nodes still in queues are leaked - this is expected since workers are stopped.
+            // For proper cleanup, drain queues before destruction if needed.
         }
 
         ThreadPool(const ThreadPool &) = delete;
@@ -146,17 +84,21 @@ namespace Plexus {
                 // Worker thread: push to OWN queue (lock-free, single-owner)
                 size_t worker_idx = t_worker_index;
                 for (auto &task : tasks) {
-                    if (!m_queues[worker_idx]->queue.push(std::move(task))) {
+                    TaskNode *node = m_pool.alloc();
+                    node->task = std::move(task);
+                    if (!m_queues[worker_idx]->queue.push(node)) {
                         // Queue full, spill to central
                         std::lock_guard<std::mutex> lock(m_overflow_mutex);
-                        m_overflow_queue.push_back(std::move(task));
+                        m_overflow_queue.push_back(node);
                     }
                 }
             } else {
                 // External thread: push all to central queue (mutex-protected)
                 std::lock_guard<std::mutex> lock(m_overflow_mutex);
                 for (auto &task : tasks) {
-                    m_overflow_queue.push_back(std::move(task));
+                    TaskNode *node = m_pool.alloc();
+                    node->task = std::move(task);
+                    m_overflow_queue.push_back(node);
                 }
             }
             // Smart wake-up: wake specific workers using per-worker CVs
@@ -180,19 +122,20 @@ namespace Plexus {
             m_active_tasks.fetch_add(1, std::memory_order_relaxed);
             m_queued_tasks.fetch_add(1, std::memory_order_relaxed);
 
-            Task task(std::forward<F>(f));
+            TaskNode *node = m_pool.alloc();
+            node->task = Task(std::forward<F>(f));
 
             if (t_worker_index < m_queues.size()) {
                 // Worker thread: push to OWN queue (lock-free, single-owner)
-                if (!m_queues[t_worker_index]->queue.push(std::move(task))) {
+                if (!m_queues[t_worker_index]->queue.push(node)) {
                     // Queue full, spill to central
                     std::lock_guard<std::mutex> lock(m_overflow_mutex);
-                    m_overflow_queue.push_back(std::move(task));
+                    m_overflow_queue.push_back(node);
                 }
             } else {
                 // External thread: push to central queue (mutex-protected)
                 std::lock_guard<std::mutex> lock(m_overflow_mutex);
-                m_overflow_queue.push_back(std::move(task));
+                m_overflow_queue.push_back(node);
             }
             // Wake one sleeping worker using per-worker CV
             for (size_t i = 0; i < m_queues.size(); ++i) {
@@ -224,7 +167,7 @@ namespace Plexus {
 
     private:
         struct alignas(64) WorkQueue {
-            WorkStealingQueue<Task> queue;
+            WorkStealingQueue<TaskNode> queue;
             std::mutex mutex;                  // Per-worker mutex for CV
             std::condition_variable cv;        // Per-worker condition variable
             std::atomic<bool> sleeping{false}; // Is this worker sleeping?
@@ -234,10 +177,11 @@ namespace Plexus {
 
         std::vector<std::unique_ptr<WorkQueue>> m_queues;
         std::vector<std::thread> m_threads;
+        TaskNodePool m_pool;
 
         // Central overflow queue for when worker queues are full
         std::mutex m_overflow_mutex;
-        std::deque<Task> m_overflow_queue;
+        std::deque<TaskNode *> m_overflow_queue;
 
         // Global synchronization for completion and stopping
         std::mutex m_mutex;
@@ -253,25 +197,25 @@ namespace Plexus {
             int local_task_count = 0; // Track tasks locally for batch decrement
 
             while (true) {
-                std::optional<Task> task_opt;
+                TaskNode *node = nullptr;
 
                 // 1. Try local queue (LIFO for cache locality) - LOCK-FREE
-                task_opt = m_queues[index]->queue.pop();
-                if (!task_opt.has_value()) {
+                node = m_queues[index]->queue.pop();
+                if (!node) {
                     // 2. Steal from other worker queues - LOCK-FREE
-                    for (size_t i = 0; !task_opt.has_value() && i < queue_count - 1; ++i) {
+                    for (size_t i = 0; !node && i < queue_count - 1; ++i) {
                         size_t steal_idx = (index + i + 1) % queue_count;
-                        task_opt = m_queues[steal_idx]->queue.steal();
+                        node = m_queues[steal_idx]->queue.steal();
                     }
                 }
 
                 // 3. Try central overflow queue if we still don't have a task
                 // Batch-grab: take half of available tasks to reduce contention and enable stealing
-                if (!task_opt.has_value()) {
+                if (!node) {
                     std::unique_lock<std::mutex> lock(m_overflow_mutex, std::try_to_lock);
                     if (lock && !m_overflow_queue.empty()) {
                         // Take one task for immediate execution
-                        task_opt = std::move(m_overflow_queue.front());
+                        node = m_overflow_queue.front();
                         m_overflow_queue.pop_front();
 
                         // Batch-grab: take up to half of remaining tasks for local queue
@@ -280,7 +224,7 @@ namespace Plexus {
                         size_t to_grab = std::min(remaining / 2, size_t{64});
 
                         for (size_t i = 0; i < to_grab; ++i) {
-                            if (!m_queues[index]->queue.push(std::move(m_overflow_queue.front()))) {
+                            if (!m_queues[index]->queue.push(m_overflow_queue.front())) {
                                 break; // Local queue full
                             }
                             m_overflow_queue.pop_front();
@@ -289,12 +233,12 @@ namespace Plexus {
                 }
 
                 // 4. Exponential backoff spin-wait before blocking
-                if (!task_opt.has_value()) {
+                if (!node) {
                     constexpr int max_spins = 64;
                     for (int spin = 1; spin <= max_spins; spin *= 2) {
                         // Quick check local queue
-                        task_opt = m_queues[index]->queue.pop();
-                        if (task_opt.has_value()) {
+                        node = m_queues[index]->queue.pop();
+                        if (node) {
                             break;
                         }
 
@@ -302,15 +246,14 @@ namespace Plexus {
                         {
                             std::unique_lock<std::mutex> lock(m_overflow_mutex, std::try_to_lock);
                             if (lock && !m_overflow_queue.empty()) {
-                                task_opt = std::move(m_overflow_queue.front());
+                                node = m_overflow_queue.front();
                                 m_overflow_queue.pop_front();
 
                                 // Batch-grab remaining tasks
                                 size_t remaining = m_overflow_queue.size();
                                 size_t to_grab = std::min(remaining / 2, size_t{64});
                                 for (size_t i = 0; i < to_grab; ++i) {
-                                    if (!m_queues[index]->queue.push(
-                                            std::move(m_overflow_queue.front()))) {
+                                    if (!m_queues[index]->queue.push(m_overflow_queue.front())) {
                                         break;
                                     }
                                     m_overflow_queue.pop_front();
@@ -327,7 +270,7 @@ namespace Plexus {
                 }
 
                 // 5. Wait for work (blocking) - use per-worker CV
-                if (!task_opt.has_value()) {
+                if (!node) {
                     // Batch decrement: update counter once before sleeping
                     if (local_task_count > 0) {
                         m_queued_tasks.fetch_sub(local_task_count, std::memory_order_relaxed);
@@ -351,13 +294,16 @@ namespace Plexus {
                 // Track task locally (will batch decrement later)
                 ++local_task_count;
 
-                // Execute task (we know task_opt.has_value() is true here)
-                assert(task_opt.has_value() && "task_opt must have value before execution");
+                // Execute task
+                assert(node != nullptr && "node must be valid before execution");
                 try {
-                    (*task_opt)();
+                    node->task();
                 } catch (...) {
                     // Task threw
                 }
+
+                // Return node to pool AFTER execution
+                m_pool.free(node);
 
                 int prev = m_active_tasks.fetch_sub(1, std::memory_order_release);
                 if (prev == 1) {
@@ -367,4 +313,5 @@ namespace Plexus {
             }
         }
     };
-}
+
+} // namespace Plexus

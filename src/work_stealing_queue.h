@@ -6,8 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <new> // hardware_destructive_interference_size
-#include <optional>
-#include <type_traits>
 #include <vector>
 
 namespace Plexus {
@@ -21,15 +19,15 @@ namespace Plexus {
      * - Owner thread: push() and pop() from the "bottom" (LIFO)
      * - Thief threads: steal() from the "top" (FIFO)
      *
-     * Uses atomic<T*> for buffer elements to ensure thread-safe access.
+     * This queue stores raw pointers (T*) with stable lifetimes.
+     * The caller is responsible for managing the pointed-to objects
+     * (typically via a pool). The queue never allocates or frees memory.
      */
     template <typename T> class WorkStealingQueue {
     public:
         explicit WorkStealingQueue(std::size_t capacity = 4096)
             : m_capacity(bit_ceil_at_least_2(capacity)), m_mask(m_capacity - 1),
               m_buffer(m_capacity) {
-            static_assert(std::is_move_constructible_v<T>,
-                          "WorkStealingQueue requires T to be move-constructible.");
 
             m_top.store(0, std::memory_order_relaxed);
             m_bottom.store(0, std::memory_order_relaxed);
@@ -39,23 +37,19 @@ namespace Plexus {
             }
         }
 
-        ~WorkStealingQueue() {
-            // Clean up any remaining elements
-            const int64_t b = m_bottom.load(std::memory_order_relaxed);
-            const int64_t t = m_top.load(std::memory_order_relaxed);
-            for (int64_t i = t; i < b; ++i) {
-                const std::size_t idx = static_cast<std::size_t>(i) & m_mask;
-                delete m_buffer[idx].load(std::memory_order_relaxed);
-            }
-        }
+        // Destructor does NOT free pointers - caller owns them via pool
+        ~WorkStealingQueue() = default;
 
         WorkStealingQueue(const WorkStealingQueue &) = delete;
         WorkStealingQueue &operator=(const WorkStealingQueue &) = delete;
 
         std::size_t capacity() const noexcept { return m_capacity; }
 
-        // Owner thread only
-        template <typename U = T> bool push(U &&value) {
+        /**
+         * @brief Push a pointer to the bottom of the queue (owner only).
+         * @return true if pushed, false if queue is full.
+         */
+        bool push(T *ptr) {
             const int64_t b = m_bottom.load(std::memory_order_relaxed);
             const int64_t t = m_top.load(std::memory_order_acquire);
 
@@ -65,11 +59,6 @@ namespace Plexus {
 
             const std::size_t idx = static_cast<std::size_t>(b) & m_mask;
 
-            // Slot should be empty (cleared by pop/steal). Debug assertion:
-            // assert(m_buffer[idx].load(std::memory_order_relaxed) == nullptr);
-
-            T *ptr = new T(std::forward<U>(value));
-
             // Store pointer. The release on bottom below will make this visible.
             m_buffer[idx].store(ptr, std::memory_order_relaxed);
 
@@ -78,8 +67,11 @@ namespace Plexus {
             return true;
         }
 
-        // Owner thread only (LIFO)
-        std::optional<T> pop() {
+        /**
+         * @brief Pop a pointer from the bottom of the queue (owner only, LIFO).
+         * @return Pointer if available, nullptr if queue is empty or lost race.
+         */
+        T *pop() {
             int64_t b = m_bottom.load(std::memory_order_relaxed) - 1;
 
             // seq_cst store to synchronize with steal's operations
@@ -90,7 +82,7 @@ namespace Plexus {
             if (t > b) {
                 // Queue was empty, restore bottom
                 m_bottom.store(b + 1, std::memory_order_relaxed);
-                return std::nullopt;
+                return nullptr;
             }
 
             const std::size_t idx = static_cast<std::size_t>(b) & m_mask;
@@ -106,7 +98,7 @@ namespace Plexus {
                                                    std::memory_order_relaxed)) {
                     // A thief won - abort without touching ptr
                     m_bottom.store(b + 1, std::memory_order_relaxed);
-                    return std::nullopt;
+                    return nullptr;
                 }
                 // We won - restore bottom (queue now empty)
                 m_bottom.store(b + 1, std::memory_order_relaxed);
@@ -114,24 +106,22 @@ namespace Plexus {
             // If t < b: exclusive access to this slot, no CAS needed.
 
             // DO NOT clear the slot - it may be reused after wraparound.
-            // Just consume the pointer we already read.
+            // The pointer has stable lifetime (managed by pool).
 
-            // Debug assertion: ptr should never be null after a successful claim
-            assert(ptr != nullptr && "pop() won CAS but ptr is null - algorithm bug");
-
-            std::optional<T> result;
-            result.emplace(std::move(*ptr));
-            delete ptr;
-            return result;
+            assert(ptr != nullptr && "pop() won but ptr is null - algorithm bug");
+            return ptr;
         }
 
-        // Thief threads (FIFO)
-        std::optional<T> steal() {
+        /**
+         * @brief Steal a pointer from the top of the queue (thief threads, FIFO).
+         * @return Pointer if available, nullptr if queue is empty or lost race.
+         */
+        T *steal() {
             int64_t t = m_top.load(std::memory_order_seq_cst);
             int64_t b = m_bottom.load(std::memory_order_seq_cst);
 
             if (t >= b) {
-                return std::nullopt; // empty
+                return nullptr; // empty
             }
 
             const std::size_t idx = static_cast<std::size_t>(t) & m_mask;
@@ -145,19 +135,14 @@ namespace Plexus {
             if (!m_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
                                                std::memory_order_relaxed)) {
                 // Lost the race - abort, do NOT use ptr
-                return std::nullopt;
+                return nullptr;
             }
 
             // We won the CAS. DO NOT clear the slot - it may be reused after wraparound.
-            // Just consume the pointer we already read.
+            // The pointer has stable lifetime (managed by pool).
 
-            // Debug assertion: ptr should never be null after a successful claim
-            assert(ptr != nullptr && "steal() won CAS but ptr is null - algorithm bug");
-
-            std::optional<T> result;
-            result.emplace(std::move(*ptr));
-            delete ptr;
-            return result;
+            assert(ptr != nullptr && "steal() won but ptr is null - algorithm bug");
+            return ptr;
         }
 
         // Approximate under concurrency; exact only when quiescent.
