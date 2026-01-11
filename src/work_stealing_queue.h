@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <new> // hardware_destructive_interference_size
@@ -93,42 +94,30 @@ namespace Plexus {
             }
 
             const std::size_t idx = static_cast<std::size_t>(b) & m_mask;
-            T *ptr;
+
+            // Read pointer BEFORE potential CAS (critical for t == b case).
+            // Chase-Lev requires reading element before CAS because after
+            // CAS the slot may be refilled by a concurrent push.
+            T *ptr = m_buffer[idx].load(std::memory_order_acquire);
 
             if (t == b) {
                 // Last element - race with thieves for the same slot.
-                // Use speculative exchange: extract ptr, then CAS, restore if lose.
-                ptr = m_buffer[idx].exchange(nullptr, std::memory_order_acquire);
-
                 if (!m_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
                                                    std::memory_order_relaxed)) {
-                    // A thief won - restore the ptr for them
-                    if (ptr) {
-                        m_buffer[idx].store(ptr, std::memory_order_release);
-                    }
+                    // A thief won - abort without touching ptr
                     m_bottom.store(b + 1, std::memory_order_relaxed);
                     return std::nullopt;
                 }
-
-                // We won the CAS. If ptr is null, a thief extracted it but will restore it
-                // since their CAS will fail. Spin until we see the restored value.
-                while (!ptr) {
-                    ptr = m_buffer[idx].exchange(nullptr, std::memory_order_acquire);
-                }
-
-                // Restore bottom (queue empty)
+                // We won - restore bottom (queue now empty)
                 m_bottom.store(b + 1, std::memory_order_relaxed);
-            } else {
-                // t < b: We have exclusive access to this slot.
-                // Thieves access slot t, we access slot b (different slots).
-                ptr = m_buffer[idx].exchange(nullptr, std::memory_order_acquire);
             }
+            // If t < b: exclusive access to this slot, no CAS needed.
 
-            // With the spin-wait loops above, ptr should never be null here.
-            // If it is, there's a fundamental algorithm bug.
-            if (!ptr) {
-                return std::nullopt;
-            }
+            // DO NOT clear the slot - it may be reused after wraparound.
+            // Just consume the pointer we already read.
+
+            // Debug assertion: ptr should never be null after a successful claim
+            assert(ptr != nullptr && "pop() won CAS but ptr is null - algorithm bug");
 
             std::optional<T> result;
             result.emplace(std::move(*ptr));
@@ -147,25 +136,23 @@ namespace Plexus {
 
             const std::size_t idx = static_cast<std::size_t>(t) & m_mask;
 
-            // Speculatively extract the pointer using exchange.
-            // This atomically reads and clears the slot.
-            T *ptr = m_buffer[idx].exchange(nullptr, std::memory_order_acquire);
+            // Read pointer BEFORE CAS (critical!).
+            // Chase-Lev requires reading element before CAS because after
+            // CAS the slot may be refilled by a concurrent push.
+            T *ptr = m_buffer[idx].load(std::memory_order_acquire);
 
             // Attempt to claim this slot by incrementing top
             if (!m_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst,
                                                std::memory_order_relaxed)) {
-                // Lost the race - restore the pointer so winner can get it
-                if (ptr) {
-                    m_buffer[idx].store(ptr, std::memory_order_release);
-                }
+                // Lost the race - abort, do NOT use ptr
                 return std::nullopt;
             }
 
-            // We won the CAS. If ptr is null, the owner (pop) extracted it but will restore it
-            // since their CAS will fail. Spin until we see the restored value.
-            while (!ptr) {
-                ptr = m_buffer[idx].exchange(nullptr, std::memory_order_acquire);
-            }
+            // We won the CAS. DO NOT clear the slot - it may be reused after wraparound.
+            // Just consume the pointer we already read.
+
+            // Debug assertion: ptr should never be null after a successful claim
+            assert(ptr != nullptr && "steal() won CAS but ptr is null - algorithm bug");
 
             std::optional<T> result;
             result.emplace(std::move(*ptr));
